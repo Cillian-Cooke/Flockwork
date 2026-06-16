@@ -22,14 +22,33 @@
   --t-dup:    #3ab8a8;
   --t-push:   #e89a40;
   --t-repeat: #e068a0;
+  --t-glide:  #5ad0e0;
+  --t-ward:   #f0d878;
+  --t-warp:   #d83ad8;
+  --t-mirror: #ff5ab0;
 
   /* entities */
   --e-hero:  #2c5de5;
   --e-enemy: #d43030;
   --e-sheep: #f5f0e0;
+
+  /* entity types (placeholder colours, override the generic hero/enemy fill) */
+  --type-knight: #2c4d8a;
+  --type-rogue:  #2f9e44;
+  --type-mage:   #8e5ad4;
+  --type-brute:  #c2530c;
+  --type-hunter: #d4a017;
+
+  /* charge UI (hotbar) */
+  --charge: #e8a23c;
 }
 
 * { box-sizing: border-box; }
+
+html {
+  touch-action: manipulation; /* no double-tap / pinch zoom, panning still allowed */
+  -webkit-text-size-adjust: 100%;
+}
 
 body {
   margin: 0;
@@ -40,6 +59,11 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ---- topbar --------------------------------------------------------------- */
@@ -220,6 +244,15 @@ body {
 .ent-sheep .glyph::before { background: var(--e-sheep); border: 2px solid #c8c4b0; }
 .cell.blocked { outline: 3px solid #2c5de5; outline-offset: -3px; }
 .cell.barrier { outline: 3px dashed #58b8d8; outline-offset: -3px; }
+.cell.charging { outline: 3px dotted var(--charge); outline-offset: -3px; }
+
+/* entity-type fills (placeholder colours) — win on specificity over ent-hero/enemy */
+.cell-inner.glyph.type-knight::before { background: var(--type-knight); }
+.cell-inner.glyph.type-rogue::before  { background: var(--type-rogue); }
+.cell-inner.glyph.type-mage::before   { background: var(--type-mage); }
+.cell-inner.glyph.type-brute::before  { background: var(--type-brute); }
+.cell-inner.glyph.type-hunter::before { background: var(--type-hunter); }
+.cell-inner.glyph.type-brute { font-size: 23px; } /* bulkier glyph for the Brute */
 
 /* index labels — plain numbers */
 .idx {
@@ -498,6 +531,10 @@ body {
 .clear-diamond:hover { background: #ffe0de; }
 .clear-diamond > span { font-size: 19px; }
 
+/* Action buttons double as drag-to-add sources — disable the browser's own
+   touch handling on press so a drag toward the hotbar isn't read as a scroll. */
+.controls [data-token] { touch-action: none; }
+
 /* base button */
 .ctl {
   background: var(--panel);
@@ -530,33 +567,34 @@ body {
   background: var(--panel);
   border: 1.5px solid var(--line);
   border-radius: 12px;
-  padding: 6px 14px;
+  padding: 6px 8px;
   margin: 0 auto 4px;
   box-shadow: var(--shadow-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 52px;
-  width: fit-content;
-  min-width: 502px;
+  width: 100%;
+  max-width: 502px;
   flex-shrink: 0;
 }
 
+/* Fixed at 10 columns (ROUND_LENGTH) — always exactly one row, tiles shrink to fit. */
 .hotbar {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: clamp(2px, 1.4vw, 6px);
   align-items: center;
-  min-height: 42px;
+  width: 100%;
 }
 .tile {
-  width: 42px; height: 42px;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-width: 0;
   border-radius: 9px;
   display: grid;
   place-items: center;
   font-weight: 800;
-  font-size: 17px;
+  font-size: clamp(9px, 3.8vw, 17px);
   color: #fff;
   border: 2px solid rgba(255,255,255,0.22);
   position: relative;
@@ -565,17 +603,38 @@ body {
 }
 .tile .tile-tick {
   position: absolute; top: 2px; left: 4px;
-  font-size: 8px; font-weight: 600; opacity: 0.7;
+  font-size: clamp(6px, 1.8vw, 8px); font-weight: 600; opacity: 0.7;
 }
-.tile.solid { cursor: grab; }
+.tile.solid { cursor: grab; touch-action: none; }
 .tile.solid:active { cursor: grabbing; }
 .tile.ghost { opacity: 0.26; cursor: default; box-shadow: none; }
 .tile.move    { background: #4c7ef0; }
 .tile.attack  { background: #d43030; }
 .tile.ability { background: #8e5ad4; }
 .tile.wait    { background: #9a9088; }
-.tile.dragging    { opacity: 0.45; transform: scale(1.06); }
+.tile.dragging    { opacity: 0.35; }
 .tile.drop-target { outline: 2px dashed var(--accent); }
+
+/* Charge link: the 'r' tile that arms a charge, every tile while it's armed,
+   and the move tile that finally fires it — see annotateCharges() in main.js */
+.tile.charge-active { box-shadow: inset 0 -4px 0 0 var(--charge); }
+.tile.charge-start  { outline: 2px solid var(--charge); outline-offset: 2px; }
+.tile.charge-end    { outline: 2px dashed var(--charge); outline-offset: 2px; }
+.tile-charge-badge {
+  position: absolute; top: 2px; right: 3px;
+  font-size: clamp(6px, 1.8vw, 8px); font-weight: 700; color: #3a2a08;
+  background: var(--charge); border-radius: 4px; padding: 0 3px; line-height: 1.3;
+}
+
+/* Floating clone that follows the pointer while dragging a hotbar tile */
+.tile-ghost {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  cursor: grabbing;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.28);
+  will-change: transform;
+}
 
 /* Insertion-point indicators: thick coloured border on left/right edge */
 .tile.insert-before {
@@ -639,25 +698,30 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 4px 16px 6px;
+  gap: 8px;
+  padding: 1px 8px;
   background: var(--bg);
   flex-shrink: 0;
   border-top: 1px solid var(--line);
+  min-height: 0;
 }
-.dz-main  { display: flex; align-items: center; gap: 10px; }
-.dz-icon  { font-size: 15px; color: var(--muted); }
+.dz-main  { display: flex; align-items: center; gap: 5px; overflow: hidden; }
+.dz-icon  { font-size: 9px; color: var(--muted); }
 .dz-icon.big { font-size: 48px; color: var(--accent); }
-.dz-text  { color: var(--muted); font-size: 12px; opacity: 0.7; transition: opacity 0.2s; }
-.dropzone-bar:hover .dz-text { opacity: 1; }
-.dz-text code { background: var(--panel); padding: 1px 4px; border-radius: 4px; border: 1px solid var(--line); }
+.dz-text  {
+  color: var(--muted); font-size: 8px; opacity: 0.28; transition: opacity 0.2s;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dropzone-bar:hover .dz-text { opacity: 0.8; }
+.dz-text code { background: var(--panel); padding: 0 3px; border-radius: 3px; border: 1px solid var(--line); }
 .dz-link  { background: none; border: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; text-decoration: underline; }
 .dz-help  {
-  background: var(--panel); color: var(--muted); border: 1px solid var(--line);
-  border-radius: 8px; padding: 5px 11px; font-size: 12px; font-weight: 600;
-  cursor: pointer; opacity: 0.7; transition: opacity 0.2s, background 0.15s;
+  background: none; color: var(--muted); border: none;
+  border-radius: 6px; padding: 1px 4px; font-size: 8px; font-weight: 600;
+  cursor: pointer; opacity: 0.28; transition: opacity 0.2s, background 0.15s;
+  flex-shrink: 0;
 }
-.dropzone-bar:hover .dz-help { opacity: 1; }
+.dropzone-bar:hover .dz-help { opacity: 0.8; }
 .dz-help:hover { background: #f0ede8; }
 
 /* ---- drag overlay --------------------------------------------------------- */
@@ -709,7 +773,7 @@ body {
   font-size: 12px; color: var(--ink); overflow: auto;
 }
 
-body { padding-bottom: 64px; }
+body { padding-bottom: 22px; }
 
 /* ---- You Lose overlay ----------------------------------------------------- */
 

@@ -18,6 +18,10 @@ export const TERRAIN_RIV = {
 export const TERRAIN_FALLBACK = {
   7: '#3ab8a8',
   9: '#e068a0',
+  10: '#5ad0e0', // glide
+  11: '#f0d878', // ward
+  12: '#d83ad8', // warp
+  13: '#ff5ab0', // mirror
 };
 
 let _rive = null;

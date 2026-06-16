@@ -14,6 +14,10 @@ export const PUSH = "push";          // pushed back one tile, opposite direction
 export const REPEAT_MOVE = "repeat-move"; // repeats previous move next tick
 export const SEE_MORE = "see-more";  // deferred
 export const SEE_LESS = "see-less";  // deferred
+export const GLIDE = "glide";        // slides all the way until blocked
+export const WARD = "ward";          // grants a damage barrier for this tick
+export const WARP = "warp";          // teleports to a random free tile, anywhere
+export const MIRROR = "mirror";      // swaps with the nearest other entity
 
 export const VOID = 0;
 
@@ -28,6 +32,10 @@ export const DEFAULT_REGISTRY = {
   7: DUPLICATE,   // duplicate
   8: PUSH,        // push
   9: REPEAT_MOVE, // repeat move
+  10: GLIDE,      // glide
+  11: WARD,       // ward
+  12: WARP,       // warp
+  13: MIRROR,     // mirror
 };
 
 // Human-facing descriptions for tooltips, keyed by effect.
@@ -41,6 +49,10 @@ export const EFFECT_INFO = {
   [DUPLICATE]:   { name: "Duplicate", desc: "Creates a copy of the entity on an adjacent free tile." },
   [PUSH]:        { name: "Push",      desc: "Pushes the entity back one tile (opposite of its move)." },
   [REPEAT_MOVE]: { name: "Repeat",    desc: "The entity repeats its last move on the next tick." },
+  [GLIDE]:       { name: "Glide",     desc: "Slides all the way in the direction you entered, until blocked by a wall or entity." },
+  [WARD]:        { name: "Ward",      desc: "Grants a damage shield for this tick." },
+  [WARP]:        { name: "Warp",      desc: "Teleports to a random free tile, anywhere on the map." },
+  [MIRROR]:      { name: "Mirror",    desc: "Swaps places with the nearest other entity." },
 };
 
 export function effectOf(terrainId, registry = DEFAULT_REGISTRY) {

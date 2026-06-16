@@ -8,14 +8,46 @@ export const HERO = "hero";
 export const ENEMY = "enemy";
 export const SHEEP = "sheep";
 
-// Entity types with special abilities (K/k knight, R/r rogue, M/m mage).
+// Entity types with special abilities (uppercase = hero, lowercase = enemy).
+// ability_1 (token 'e') fires instantly, no direction needed. ability_2
+// (token 'r') arms a charge that fires on whichever direction key comes next
+// — see Engine._resolveCharges.
 export const ENTITY_TYPES = {
-  K: { type: "knight", ability_1: "block", ability_2: "lunge" },
-  k: { type: "knight", ability_1: "block", ability_2: "lunge" },
-  R: { type: "rogue", ability_1: "dash", ability_2: "ambush" },
-  r: { type: "rogue", ability_1: "dash", ability_2: "ambush" },
-  M: { type: "mage", ability_1: "barrier", ability_2: "chain" },
-  m: { type: "mage", ability_1: "barrier", ability_2: "chain" },
+  K: { type: "knight", ability_1: "block",     ability_2: "lunge" },
+  k: { type: "knight", ability_1: "block",     ability_2: "lunge" },
+  R: { type: "rogue",  ability_1: "dash",      ability_2: "backstab" },
+  r: { type: "rogue",  ability_1: "dash",      ability_2: "backstab" },
+  M: { type: "mage",   ability_1: "barrier",   ability_2: "chain_bolt" },
+  m: { type: "mage",   ability_1: "barrier",   ability_2: "chain_bolt" },
+  B: { type: "brute",  ability_1: "slam",      ability_2: "charge" },
+  b: { type: "brute",  ability_1: "slam",      ability_2: "charge" },
+  H: { type: "hunter", ability_1: "quickshot", ability_2: "snipe" },
+  h: { type: "hunter", ability_1: "quickshot", ability_2: "snipe" },
+};
+
+// Tooltip copy for each type's abilities, plus any movement quirk.
+export const ABILITY_INFO = {
+  knight: {
+    e: "Block — invincible against attacks this tick.",
+    r: "Lunge — charge, then a direction: steps in and stabs the tile beyond.",
+  },
+  rogue: {
+    e: "Dash — automatically repeats your last move next tick.",
+    r: "Backstab — charge, then a direction: strikes 2 tiles away.",
+  },
+  mage: {
+    e: "Barrier — blocks all damage this tick.",
+    r: "Chain Bolt — charge, then a direction: beam hits everything in line until a wall.",
+  },
+  brute: {
+    e: "Slam — instantly hits all 4 adjacent tiles.",
+    r: "Charge — charge, then a direction: barrels forward until it hits a wall or an entity.",
+    move: "Moves 2 tiles per move action.",
+  },
+  hunter: {
+    e: "Quickshot — instant shot 2 tiles along your last move direction.",
+    r: "Snipe — charge, then a direction: long-range shot, hits the first thing in the way.",
+  },
 };
 
 export function kindOf(letter) {
@@ -41,9 +73,10 @@ export class Entity {
     this.skipNext = false;
     this.repeatNext = false; // force repeat of last move
     this.lastMove = lastMove; // [dr, dc] of previous move
-    this.entityType = entityType; // "knight" | "rogue" | "mage" | ""
+    this.entityType = entityType; // "knight" | "rogue" | "mage" | "brute" | "hunter" | ""
     this.blocked = false; // Knight BLOCK protection
-    this.barrier = false; // Mage BARRIER protection
+    this.barrier = false; // Mage BARRIER / Ward protection
+    this.chargingAbility2 = false; // armed by 'r', fires on the next move direction
   }
 
   get pos() {
@@ -83,6 +116,7 @@ export class Entity {
     e.repeatNext = this.repeatNext;
     e.blocked = this.blocked;
     e.barrier = this.barrier;
+    e.chargingAbility2 = this.chargingAbility2;
     return e;
   }
 }

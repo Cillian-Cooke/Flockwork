@@ -7,8 +7,9 @@
 //   w/a/s/d  -> move    up/left/down/right
 //   t/f/g/h  -> attack  up/left/down/right
 //   .        -> wait
-//   e        -> ability 1 (entity-specific)
-//   r        -> ability 2 (entity-specific)
+//   e        -> ability 1 (entity-specific, fires instantly, no direction)
+//   r        -> ability 2 (entity-specific, CHARGE: arms here, fires on
+//               whichever move-direction token comes next — see Engine)
 
 export const MOVE_TOKENS = {
   w: [-1, 0], // up    (row - 1)
@@ -63,7 +64,7 @@ export function tokenLabel(token) {
   const labels = {
     w: "↑ move up", a: "← move left", s: "↓ move down", d: "→ move right",
     t: "↑ attack up", f: "← attack left", g: "↓ attack down", h: "→ attack right",
-    e: "ability 1", r: "ability 2", ".": "wait",
+    e: "ability 1 (instant)", r: "ability 2 (charge)", ".": "wait",
   };
   return labels[token] || token;
 }

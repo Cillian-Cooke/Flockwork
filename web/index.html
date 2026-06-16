@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Flockwork</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
@@ -153,8 +153,12 @@
         <li><code>rounds</code> <em>(save)</em> — array of completed round move arrays</li>
         <li><code>current</code> <em>(save)</em> — moves queued for the next round</li>
       </ul>
-      <p class="fmt-mini"><b>Terrain:</b> 0 void · 1 grass · 2 wall · 3 lava · 4 slip · 5 skip · 6 portal · 7 dup · 8 push · 9 repeat · 10-100 grass</p>
-      <p class="fmt-mini"><b>Tokens:</b> move <code>w a s d</code> · attack <code>t f g h</code> · ability <code>e r</code> · wait <code>.</code></p>
+      <p class="fmt-mini"><b>Terrain:</b> 0 void · 1 grass · 2 wall · 3 lava · 4 slip · 5 skip · 6 portal · 7 dup · 8 push · 9 repeat · 10 glide · 11 ward · 12 warp · 13 mirror · 14-100 grass</p>
+      <p class="fmt-mini"><b>Tokens:</b> move <code>w a s d</code> · attack <code>t f g h</code> · wait <code>.</code><br>
+        <code>e</code> = instant ability · <code>r</code> = charge — arms on press, fires on whichever move key comes next
+        (stays armed through waits/attacks in between)</p>
+      <p class="fmt-mini"><b>Heroes/enemies:</b> uppercase = hero, lowercase = enemy &mdash;
+        K knight · R rogue · M mage · B brute (moves 2 tiles) · H hunter</p>
       <pre class="fmt-example">{
   "name": "My Map",
   "grid": [

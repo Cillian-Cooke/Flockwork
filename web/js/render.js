@@ -161,7 +161,7 @@ export function updateBoard(board, gmap) {
       cell.div.dataset.terrain = inMap ? gmap.terrain[wr][wc] : 0;
 
       // Entity overlay
-      cell.div.classList.remove('ent-hero', 'ent-enemy', 'ent-sheep', 'blocked', 'barrier');
+      cell.div.classList.remove('ent-hero', 'ent-enemy', 'ent-sheep', 'blocked', 'barrier', 'charging');
       delete cell.div.dataset.entity;
       cell.inner.textContent = '';
       cell.inner.className = 'cell-inner';
@@ -173,8 +173,10 @@ export function updateBoard(board, gmap) {
           cell.div.classList.add(`ent-${ent.kind}`);
           if (ent.blocked) cell.div.classList.add('blocked');
           if (ent.barrier) cell.div.classList.add('barrier');
+          if (ent.chargingAbility2) cell.div.classList.add('charging');
           cell.inner.textContent = ent.letter;
           cell.inner.classList.add('glyph');
+          if (ent.entityType) cell.inner.classList.add(`type-${ent.entityType}`);
         }
       }
     }
@@ -335,8 +337,9 @@ export function buildInitialLog(gmap) {
   entries.push({ cls: "header", text: "Entities:" });
   for (const e of gmap.entities) {
     const kindName = e.kind === HERO ? "Hero" : e.kind === SHEEP ? "Sheep" : "Enemy";
+    const typeName = e.entityType ? ` ${e.entityType}` : "";
     const loopStr  = e.loop.length ? e.loop.join(" ") : "player";
-    entries.push({ cls: "sep", text: `  ${e.letter} (${kindName}) @ [${e.row}][${e.col}]  loop: ${loopStr}` });
+    entries.push({ cls: "sep", text: `  ${e.letter} (${kindName}${typeName}) @ [${e.row}][${e.col}]  loop: ${loopStr}` });
   }
   entries.push({ cls: "sep", text: "" });
   entries.push({ cls: "header", text: "Enemy & sheep loops:" });
@@ -344,7 +347,8 @@ export function buildInitialLog(gmap) {
     entries.push({ cls: "sep", text: `  ${letter} (${kind}): ${loop.join(" ")}` });
   }
   entries.push({ cls: "sep", text: "" });
-  entries.push({ cls: "sep", text: "Move: w a s d  ·  Attack: t f g h  ·  Ability: e r  ·  Wait: ." });
+  entries.push({ cls: "sep", text: "Move: w a s d  ·  Attack: t f g h  ·  Wait: ." });
+  entries.push({ cls: "sep", text: "e: instant ability  ·  r: charge — fires on whichever move key comes next" });
   entries.push({ cls: "sep", text: "─────────────────────────────────────" });
   return entries;
 }

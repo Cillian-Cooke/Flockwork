@@ -5,7 +5,7 @@ import { buildGameMap, MapError } from "./mapdata.js";
 import { initBoard, updateBoard, startRafLoop, buildInitialLog, buildTickEntries } from "./render.js";
 import { classify, tokenLabel, ROUND_LENGTH } from "./tokens.js";
 import { describeTerrain } from "./terrain.js";
-import { HERO, ENEMY, SHEEP } from "./entity.js";
+import { HERO, ENEMY, SHEEP, ABILITY_INFO } from "./entity.js";
 import { initRiv, buildFilmstrips, playYouLose } from "./riv.js";
 
 // --- state ----------------------------------------------------------------
@@ -27,6 +27,11 @@ let youLosePlayed = false;
 
 const KEYMAP = { w:"w",a:"a",s:"s",d:"d",t:"t",f:"f",g:"g",h:"h",e:"e",r:"r",".":"." };
 const SYMBOL  = { w:"↑",s:"↓",a:"←",d:"→",t:"↑",f:"←",g:"↓",h:"→",e:"e",r:"r",".":"·" };
+
+// --- mobile lockdown: no pinch-zoom / double-tap-zoom, page stays fixed ----
+
+document.addEventListener("touchmove", e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+document.addEventListener("gesturestart", e => e.preventDefault());
 
 // --- DOM refs -------------------------------------------------------------
 
@@ -204,21 +209,68 @@ function tileKind(token) {
   return "ability";
 }
 
-function makeTile(token, tickNo, solid, index) {
+// Mirrors Engine._resolveCharges over the player's queued tokens, purely for
+// hotbar display: an armed 'r' (ability_2) stays active through whatever
+// comes next and only fires on the following move token — so a powerful
+// charged action visibly spans every tile from the 'r' to the move that
+// triggers it, and the badge shows exactly how many actions it costs.
+function annotateCharges(tokens) {
+  const active = new Set();
+  const starts = new Map(); // start index -> ticks until it fires
+  const ends   = new Set();
+  let chargeStart = null;
+  tokens.forEach((tok, i) => {
+    const [kind] = classify(tok);
+    if (kind === "ability_2") {
+      chargeStart = i;
+      active.add(i);
+    } else if (chargeStart !== null) {
+      active.add(i);
+      if (kind === "move") {
+        ends.add(i);
+        starts.set(chargeStart, i - chargeStart);
+        chargeStart = null;
+      }
+    }
+  });
+  return { active, starts, ends };
+}
+
+function makeTile(token, tickNo, solid, index, chargeInfo) {
   const tile = document.createElement("div");
-  tile.className = `tile ${tileKind(token)} ${solid ? "solid" : "ghost"}`;
-  tile.title = `tick ${tickNo}: ${tokenLabel(token)}`;
-  tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${SYMBOL[token] || token}`;
-  if (solid) { tile.draggable = true; tile.dataset.index = index; }
+  const classes = ["tile", tileKind(token), solid ? "solid" : "ghost"];
+  let title = `tick ${tickNo}: ${tokenLabel(token)}`;
+  let badge = "";
+
+  if (chargeInfo.active.has(index)) classes.push("charge-active");
+  if (chargeInfo.starts.has(index)) {
+    classes.push("charge-start");
+    const span = chargeInfo.starts.get(index);
+    badge = `<span class="tile-charge-badge">×${span + 1}</span>`;
+    title += ` — charges; fires ${span} tick${span === 1 ? "" : "s"} later (×${span + 1} actions total)`;
+  } else if (chargeInfo.active.has(index) && !chargeInfo.ends.has(index)) {
+    title += " — ability still charging";
+  }
+  if (chargeInfo.ends.has(index)) {
+    classes.push("charge-end");
+    title += " — charged ability fires here";
+  }
+
+  tile.className = classes.join(" ");
+  tile.title = title;
+  tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${SYMBOL[token] || token}${badge}`;
+  if (solid) { tile.dataset.index = index; }
   return tile;
 }
 
 function renderHotbar() {
   hotbarEl.innerHTML = "";
   const n = currentMoves.length;
+  if (!n) return;
+  const displayed   = Array.from({ length: ROUND_LENGTH }, (_, i) => currentMoves[i % n]);
+  const chargeInfo  = annotateCharges(displayed);
   for (let i = 0; i < ROUND_LENGTH; i++) {
-    if (i < n)       hotbarEl.appendChild(makeTile(currentMoves[i],     i + 1, true,  i));
-    else if (n > 0)  hotbarEl.appendChild(makeTile(currentMoves[i % n], i + 1, false, i));
+    hotbarEl.appendChild(makeTile(displayed[i], i + 1, i < n, i, chargeInfo));
   }
 }
 
@@ -487,12 +539,29 @@ window.addEventListener("resize", () => {
   centerCurrentDot(false);
 });
 
-// --- hotbar drag-to-reorder + drag-to-delete --------------------------------
+// --- hotbar drag-to-reorder / drag-to-delete / drag-to-add (Pointer Events) -
+//
+// Two drag sources feed the same pointermove/pointerup machinery:
+//  "reorder" — picked up an existing tile in the hotbar (may also delete it
+//              by dropping on the controls).
+//  "spawn"   — picked up an action button in the controls; dropping it on
+//              the hotbar inserts a new token at that position.
 
-let dragIndex    = null;
-let insertAtIdx  = null; // where the item will land (0..n)
+let dragSource    = null;  // "reorder" | "spawn" | null
+let dragIndex     = null;  // index of the tile being dragged (source: reorder)
+let dragToken     = null;  // token being spawned (source: spawn)
+let dragPointerId = null;
+let dragging      = false; // crossed the move threshold → visually dragging
+let insertAtIdx   = null;  // where the item will land (0..n)
+let dropMode      = null;  // "reorder" | "delete" | null
+let startX = 0, startY = 0;
+let ghostEl        = null;
+let pendingXY      = null;
+let rafId          = null;
+let suppressClick  = false; // swallow the click a finished spawn-drag leaves behind
 
 const controlsEl = document.querySelector(".controls");
+const DRAG_THRESHOLD = 4; // px of movement before a press counts as a drag
 
 // Calculate the insertion index (0..n) based on cursor X.
 function calcInsertIdx(clientX) {
@@ -520,66 +589,163 @@ function clearDragState() {
   hotbarEl.querySelectorAll(".insert-before,.insert-after,.dragging").forEach(t =>
     t.classList.remove("insert-before", "insert-after", "dragging"));
   controlsEl.classList.remove("drop-to-delete");
-  insertAtIdx = null;
-  dragIndex   = null;
+  if (ghostEl) { ghostEl.remove(); ghostEl = null; }
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+  pendingXY     = null;
+  insertAtIdx   = null;
+  dragSource    = null;
+  dragIndex     = null;
+  dragToken     = null;
+  dragPointerId = null;
+  dragging      = false;
+  dropMode      = null;
 }
 
-hotbarEl.addEventListener("dragstart", e => {
-  const tile = e.target.closest(".tile.solid");
-  if (!tile) return;
-  dragIndex = Number(tile.dataset.index);
-  tile.classList.add("dragging");
-  e.dataTransfer.effectAllowed = "move";
-});
+// Where is the pointer hovering — the hotbar (reorder/add) or the controls (delete)?
+function hitTarget(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  if (el.closest(".hotbar-panel")) return "reorder";
+  if (dragSource === "reorder" && el.closest(".controls")) return "delete";
+  return null;
+}
 
-hotbarEl.addEventListener("dragend", clearDragState);
+// Floating clone of the tile being reordered.
+function startGhost(tile, clientX, clientY) {
+  const rect = tile.getBoundingClientRect();
+  ghostEl = tile.cloneNode(true);
+  ghostEl.classList.add("tile-ghost");
+  ghostEl.classList.remove("dragging");
+  ghostEl.style.position = "fixed";
+  ghostEl.style.left   = `${rect.left}px`;
+  ghostEl.style.top    = `${rect.top}px`;
+  ghostEl.style.width  = `${rect.width}px`;
+  ghostEl.style.height = `${rect.height}px`;
+  document.body.appendChild(ghostEl);
+}
 
-hotbarEl.addEventListener("dragover", e => {
-  if (dragIndex === null) return;
+// Floating preview tile for a token being dragged in from the controls —
+// sized to match the real hotbar tiles, centred on the finger/cursor.
+function startSpawnGhost(token, clientX, clientY) {
+  const sample = hotbarEl.querySelector(".tile");
+  const { width, height } = sample ? sample.getBoundingClientRect() : { width: 38, height: 38 };
+  ghostEl = document.createElement("div");
+  ghostEl.className = `tile ${tileKind(token)} tile-ghost`;
+  ghostEl.textContent = SYMBOL[token] || token;
+  ghostEl.style.position = "fixed";
+  ghostEl.style.left   = `${clientX - width / 2}px`;
+  ghostEl.style.top    = `${clientY - height / 2}px`;
+  ghostEl.style.width  = `${width}px`;
+  ghostEl.style.height = `${height}px`;
+  document.body.appendChild(ghostEl);
+}
+
+function updateGhostFrame() {
+  rafId = null;
+  if (!pendingXY) return;
+  const { x, y } = pendingXY;
+  if (ghostEl) ghostEl.style.transform = `translate(${x - startX}px, ${y - startY}px) scale(1.06)`;
+
+  dropMode = hitTarget(x, y);
+  if (dropMode === "delete") {
+    hotbarEl.querySelectorAll(".insert-before,.insert-after").forEach(t =>
+      t.classList.remove("insert-before", "insert-after"));
+    controlsEl.classList.add("drop-to-delete");
+  } else {
+    controlsEl.classList.remove("drop-to-delete");
+    if (dropMode === "reorder") showInsertMark(x);
+  }
+}
+
+function onPointerMove(e) {
+  if (dragSource === null || e.pointerId !== dragPointerId) return;
+  const dx = e.clientX - startX, dy = e.clientY - startY;
+
+  if (!dragging) {
+    if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+    dragging = true;
+    if (dragSource === "reorder") {
+      const tile = hotbarEl.querySelector(`.tile.solid[data-index="${dragIndex}"]`);
+      if (tile) { tile.classList.add("dragging"); startGhost(tile, e.clientX, e.clientY); }
+    } else if (dragSource === "spawn") {
+      startSpawnGhost(dragToken, e.clientX, e.clientY);
+    }
+  }
+
   e.preventDefault();
-  e.dataTransfer.dropEffect = "move";
-  controlsEl.classList.remove("drop-to-delete");
-  showInsertMark(e.clientX);
-});
+  pendingXY = { x: e.clientX, y: e.clientY };
+  if (!rafId) rafId = requestAnimationFrame(updateGhostFrame);
+}
 
-hotbarEl.addEventListener("drop", e => {
-  if (dragIndex === null) return;
-  e.preventDefault();
-  let toIdx = insertAtIdx ?? calcInsertIdx(e.clientX);
-  // Adjust: removing item at dragIndex shifts later items left by 1
-  if (toIdx > dragIndex) toIdx--;
-  toIdx = Math.max(0, Math.min(toIdx, currentMoves.length - 1));
-  if (toIdx !== dragIndex) {
-    const [moved] = currentMoves.splice(dragIndex, 1);
-    currentMoves.splice(toIdx, 0, moved);
-    renderHotbar();
-    resetCurrentRound();
+function onPointerUp(e) {
+  if (dragSource === null || e.pointerId !== dragPointerId) return;
+  document.removeEventListener("pointermove", onPointerMove);
+  document.removeEventListener("pointerup", onPointerUp);
+  document.removeEventListener("pointercancel", onPointerCancel);
+
+  if (dragging) {
+    if (dragSource === "reorder") {
+      if (dropMode === "delete") {
+        currentMoves.splice(dragIndex, 1);
+        renderHotbar();
+        resetCurrentRound();
+      } else if (dropMode === "reorder") {
+        let toIdx = insertAtIdx ?? calcInsertIdx(e.clientX);
+        if (toIdx > dragIndex) toIdx--; // removing dragIndex shifts later items left by 1
+        toIdx = Math.max(0, Math.min(toIdx, currentMoves.length - 1));
+        if (toIdx !== dragIndex) {
+          const [moved] = currentMoves.splice(dragIndex, 1);
+          currentMoves.splice(toIdx, 0, moved);
+          renderHotbar();
+          resetCurrentRound();
+        }
+      }
+    } else if (dragSource === "spawn" && dropMode === "reorder" && !playing && !playingThrough) {
+      const idx = Math.max(0, Math.min(insertAtIdx ?? calcInsertIdx(e.clientX), currentMoves.length));
+      currentMoves.splice(idx, 0, dragToken);
+      renderHotbar();
+      resetCurrentRound();
+    }
+    suppressClick = true; // the synthesized click after this pointerup must not also append
   }
   clearDragState();
-});
+}
 
-// Dragging a tile over the controls pads = drop to delete
-controlsEl.addEventListener("dragover", e => {
-  if (dragIndex === null) return;
-  e.preventDefault();
-  e.dataTransfer.dropEffect = "move";
-  hotbarEl.querySelectorAll(".insert-before,.insert-after").forEach(t =>
-    t.classList.remove("insert-before", "insert-after"));
-  controlsEl.classList.add("drop-to-delete");
-});
-
-controlsEl.addEventListener("dragleave", e => {
-  if (!controlsEl.contains(e.relatedTarget))
-    controlsEl.classList.remove("drop-to-delete");
-});
-
-controlsEl.addEventListener("drop", e => {
-  if (dragIndex === null) return;
-  e.preventDefault();
-  currentMoves.splice(dragIndex, 1);
-  renderHotbar();
-  resetCurrentRound();
+function onPointerCancel() {
+  document.removeEventListener("pointermove", onPointerMove);
+  document.removeEventListener("pointerup", onPointerUp);
+  document.removeEventListener("pointercancel", onPointerCancel);
   clearDragState();
+}
+
+hotbarEl.addEventListener("pointerdown", e => {
+  const tile = e.target.closest(".tile.solid");
+  if (!tile || dragSource !== null) return;
+  dragSource    = "reorder";
+  dragIndex     = Number(tile.dataset.index);
+  dragPointerId = e.pointerId;
+  startX = e.clientX;
+  startY = e.clientY;
+  document.addEventListener("pointermove", onPointerMove);
+  document.addEventListener("pointerup", onPointerUp);
+  document.addEventListener("pointercancel", onPointerCancel);
+});
+
+// Press-and-drag an action button straight into the hotbar to queue it at a
+// specific position (a plain tap still appends to the end — see the click
+// handler in the input-wiring section below).
+document.querySelectorAll(".controls [data-token]").forEach(btn => {
+  btn.addEventListener("pointerdown", e => {
+    if (playing || playingThrough || dragSource !== null) return;
+    dragSource    = "spawn";
+    dragToken     = btn.dataset.token;
+    dragPointerId = e.pointerId;
+    startX = e.clientX;
+    startY = e.clientY;
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", onPointerUp);
+    document.addEventListener("pointercancel", onPointerCancel);
+  });
 });
 
 // --- chat -----------------------------------------------------------------
@@ -612,12 +778,18 @@ function entityAt(gmap, r, c) {
 }
 function describeEntity(e) {
   const kindName = e.kind === HERO ? "Hero" : e.kind === ENEMY ? "Enemy" : "Sheep";
+  const typeName = e.entityType ? ` ${e.entityType}` : "";
   const role = e.kind === HERO
     ? "Player-controlled."
-    : e.kind === SHEEP ? "Clear all sheep to win." : "Runs fixed loop; kills heroes.";
+    : e.kind === SHEEP ? "Clear all sheep to win. Pushed/slipped/teleported as one flock." : "Runs fixed loop; kills heroes.";
   const pattern = e.kind === HERO ? "player" : (e.loop.length ? e.loop.join(" ") : "—");
-  return `<div class="tt-title">${kindName} '${e.letter}'</div>` +
-    `<div>${role}</div><div class="tt-sub">loop: ${pattern}</div>`;
+  const info = ABILITY_INFO[e.entityType];
+  const abilities = info
+    ? `<div class="tt-sub">e: ${info.e}</div><div class="tt-sub">r: ${info.r}</div>` +
+      (info.move ? `<div class="tt-sub">${info.move}</div>` : "")
+    : "";
+  return `<div class="tt-title">${kindName}${typeName} '${e.letter}'</div>` +
+    `<div>${role}</div><div class="tt-sub">loop: ${pattern}</div>${abilities}`;
 }
 
 boardEl.addEventListener("mousemove", e => {
@@ -642,10 +814,16 @@ boardEl.addEventListener("mouseleave", () => { tooltip.hidden = true; });
 
 // --- input wiring --------------------------------------------------------
 
+// A tap appends to the end; a press-and-drag (handled above) inserts at the
+// drop position instead and sets suppressClick so this handler is a no-op.
+function clickAppend(token) {
+  if (suppressClick) { suppressClick = false; return; }
+  appendToken(token);
+}
 document.querySelectorAll(".ctl[data-token]").forEach(btn => {
-  btn.addEventListener("click", () => appendToken(btn.dataset.token));
+  btn.addEventListener("click", () => clickAppend(btn.dataset.token));
 });
-document.getElementById("btn-r").addEventListener("click", () => appendToken("r"));
+document.getElementById("btn-r").addEventListener("click", () => clickAppend("r"));
 document.getElementById("clear").addEventListener("click", clearMoves);
 document.getElementById("play").addEventListener("click", playRound);
 
