@@ -706,7 +706,12 @@ function onPointerUp(e) {
       renderHotbar();
       resetCurrentRound();
     }
-    suppressClick = true; // the synthesized click after this pointerup must not also append
+    // The browser may or may not still fire a synthetic "click" after this
+    // (it won't if the drop target differs from the press target). Set the
+    // flag for that same-tick click to consume, then self-clear shortly after
+    // so an unrelated future tap is never accidentally swallowed.
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 0);
   }
   clearDragState();
 }
