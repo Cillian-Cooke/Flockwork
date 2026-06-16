@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flockwork</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- Top bar: map title centred + round/tick meta + log toggle -->
+  <header class="topbar">
+    <div class="topbar-left"></div>
+    <div class="topbar-center">
+      <h1 class="map-title" id="map-title">—</h1>
+      <div class="map-meta" id="map-meta">R1 · T0</div>
+    </div>
+    <div class="topbar-right">
+      <button class="chat-toggle" id="chat-toggle">💬 Log</button>
+    </div>
+  </header>
+
+  <!-- Save/replay banner (hidden until a save file is loaded) -->
+  <div class="save-options" id="save-options" hidden>
+    <span class="save-info" id="save-info"></span>
+    <button class="opt-btn opt-continue" id="opt-continue">▶ Continue</button>
+    <button class="opt-btn opt-play"     id="opt-playthrough">⏵ Play Through</button>
+    <button class="opt-btn opt-restart"  id="opt-restart">↺ Restart Map</button>
+  </div>
+
+  <!-- Floating chat / game log (top-right) -->
+  <div class="chat-popup" id="chat-popup" hidden>
+    <div class="chat-header">
+      <span>Game Log</span>
+      <div class="chat-header-actions">
+        <button class="download-btn" id="download-log">⬇ Save JSON</button>
+        <button class="chat-header-close" id="chat-close">×</button>
+      </div>
+    </div>
+    <div class="chat-body" id="chat-body"></div>
+  </div>
+
+  <!-- Board: borderless, floats on the page -->
+  <main class="layout">
+    <div class="board-stage">
+      <div class="board-rotator">
+        <div id="board" class="board"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Timeline: dots representing game ticks -->
+  <section class="timeline-panel">
+    <div class="timeline-wrapper">
+      <div id="timeline-dots" class="timeline-dots"></div>
+    </div>
+  </section>
+
+  <!-- Hotbar: queued actions (above the controls) -->
+  <section class="hotbar-panel">
+    <div id="hotbar" class="hotbar" aria-label="move hotbar"></div>
+  </section>
+
+  <!-- Controls: isometric pads with Play / R / Clear column between them -->
+  <section class="controls">
+
+    <!-- Move pad | center column (Play / R / Clear) | Attack pad -->
+    <div class="pads-row">
+
+      <div class="pad" aria-label="movement">
+        <span class="pad-title">Move</span>
+        <div class="pad-stage">
+          <div class="pad-grid">
+            <button class="ctl move-btn" data-token="w" style="grid-area:up"><span>W</span></button>
+            <button class="ctl move-btn" data-token="a" style="grid-area:left"><span>A</span></button>
+            <button class="ctl wait-btn" data-token="." style="grid-area:center"><span>.</span></button>
+            <button class="ctl move-btn" data-token="d" style="grid-area:right"><span>D</span></button>
+            <button class="ctl move-btn" data-token="s" style="grid-area:down"><span>S</span></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Center column of diamond buttons -->
+      <div class="center-column">
+        <button id="play" class="diamond-btn play-diamond" aria-label="play">
+          <span>▶</span>
+        </button>
+        <button class="diamond-btn r-diamond" data-token="r" id="btn-r" aria-label="special R">
+          <span>R</span>
+        </button>
+        <button id="clear" class="diamond-btn clear-diamond" aria-label="clear">
+          <span>🗑</span>
+        </button>
+      </div>
+
+      <div class="pad" aria-label="attack">
+        <span class="pad-title">Attack</span>
+        <div class="pad-stage">
+          <div class="pad-grid">
+            <button class="ctl atk-btn" data-token="t" style="grid-area:up"><span>T</span></button>
+            <button class="ctl atk-btn" data-token="f" style="grid-area:left"><span>F</span></button>
+            <button class="ctl ability-center" data-token="e" style="grid-area:center"><span>E</span></button>
+            <button class="ctl atk-btn" data-token="h" style="grid-area:right"><span>H</span></button>
+            <button class="ctl atk-btn" data-token="g" style="grid-area:down"><span>G</span></button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </section>
+
+  <!-- Floating tooltip -->
+  <div id="tooltip" class="tooltip" hidden></div>
+
+  <!-- Bottom dropzone bar -->
+  <footer class="dropzone-bar" id="dropzone">
+    <div class="dz-main">
+      <span class="dz-icon" aria-hidden="true">⤓</span>
+      <span class="dz-text">
+        Drag &amp; drop — or <button class="dz-link" id="pick-file">click to choose</button> —
+        a <code>.json</code> map or saved game
+      </span>
+    </div>
+    <button class="dz-help" id="format-help">? format</button>
+    <input id="file-input" type="file" accept=".json,application/json" hidden />
+  </footer>
+
+  <!-- Full-screen drag overlay -->
+  <div id="drag-overlay" class="drag-overlay" hidden>
+    <div class="drag-overlay-inner">
+      <div class="dz-icon big">⤓</div>
+      <div class="drop-title">Drop your map or save to load it</div>
+      <div class="drop-sub">release anywhere · a single .json file</div>
+    </div>
+  </div>
+
+  <!-- Format help modal -->
+  <div id="format-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="JSON format">
+      <button class="modal-x" data-close aria-label="close">×</button>
+      <h2>JSON Format</h2>
+      <p>The <b>same format</b> is used for creating a level and for saving / loading a game.
+         The <code>rounds</code> and <code>current</code> fields are optional — omit them for a
+         fresh level; they are included automatically when you download a saved game.</p>
+      <ul class="fmt-list">
+        <li><code>name</code> — map title (first 20 chars shown)</li>
+        <li><code>grid</code> — 2-D array of cell strings: terrain id + optional entity letter.<br>
+          <code>"0"</code> void (fall = die) · <code>"1"</code> grass · <code>"2"</code> wall ·
+          <code>"1A"</code> hero · <code>"1s"</code> sheep · <code>"1a"</code> enemy</li>
+        <li><code>scripts</code> — loop of action tokens for each enemy / sheep</li>
+        <li><code>rounds</code> <em>(save)</em> — array of completed round move arrays</li>
+        <li><code>current</code> <em>(save)</em> — moves queued for the next round</li>
+      </ul>
+      <p class="fmt-mini"><b>Terrain:</b> 0 void · 1 grass · 2 wall · 3 lava · 4 slip · 5 skip · 6 portal · 7 dup · 8 push · 9 repeat · 10-100 grass</p>
+      <p class="fmt-mini"><b>Tokens:</b> move <code>w a s d</code> · attack <code>t f g h</code> · ability <code>e r</code> · wait <code>.</code></p>
+      <pre class="fmt-example">{
+  "name": "My Map",
+  "grid": [
+    ["0",  "1",  "1A", "1",  "0" ],
+    ["1",  "1",  "1",  "1",  "1s"],
+    ["0",  "1a", "1",  "1",  "0" ]
+  ],
+  "scripts": { "s": ["w","s","."], "a": ["d","a"] },
+  "rounds":  [["w","d","d"],["d","d","d","d","d"]],
+  "current": []
+}</pre>
+    </div>
+  </div>
+
+  <!-- Full-screen You Lose animation overlay (hidden until game ends in defeat) -->
+  <canvas id="you-lose-canvas" class="you-lose-overlay" hidden></canvas>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
