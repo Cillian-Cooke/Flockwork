@@ -42,6 +42,7 @@ function makeIdxLabel(text, styles) {
 // updateBoard and startRafLoop. Call once; rebuild only when vision changes.
 export function initBoard(boardEl, vision) {
   boardEl.innerHTML = '';
+  boardEl.style.transform = ''; // fresh map/vision → reset any pinch-zoom/pan
   const screenDim = 2 * vision + 1;
 
   const stage = boardEl.closest('.board-stage');
@@ -96,6 +97,10 @@ export function initBoard(boardEl, vision) {
     heroCol:        0,
     filmstrips:     null,
     stopped:        false,
+    // Mobile pinch-zoom/pan view state. Only touched by gesture handlers in
+    // main.js and never reset by updateBoard, so scrubbing the timeline or
+    // playing a round never moves the camera the user has set.
+    cam: { scale: 1, x: 0, y: 0 },
   };
 }
 

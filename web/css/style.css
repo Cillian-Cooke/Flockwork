@@ -166,11 +166,17 @@ body {
   min-height: 0;
   display: grid;
   place-items: center;
-  overflow: visible;
+  overflow: hidden; /* clip the board viewport — needed once it's pinch-pannable */
   background: transparent;
+  touch-action: none; /* pinch/drag on the board is handled manually */
 }
 
 .board-rotator { /* no rotation — flat grid */ }
+
+.board {
+  transform-origin: center center;
+  will-change: transform;
+}
 
 .grid {
   position: relative;
@@ -691,6 +697,50 @@ body {
 }
 .tooltip .tt-title { font-weight: 800; color: var(--accent); }
 .tooltip .tt-sub   { color: var(--muted); }
+
+/* ---- mobile tap-to-inspect popup ------------------------------------------ */
+
+.cell-popup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(20,16,12,0.32);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 14px max(18px, env(safe-area-inset-bottom));
+  touch-action: none;
+}
+.cell-popup-overlay[hidden] { display: none; }
+
+.cell-popup {
+  position: relative;
+  width: min(360px, 100%);
+  background: var(--panel);
+  border: 1.5px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 16px 38px 16px 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+  animation: pop 0.15s ease;
+}
+.cell-popup .tt-title { font-weight: 800; color: var(--accent); font-size: 15px; margin-bottom: 4px; }
+.cell-popup .tt-sub   { color: var(--muted); }
+
+.cell-popup-close {
+  position: absolute;
+  top: 8px; right: 10px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px;
+}
+.cell-popup-close:hover { color: var(--ink); }
 
 /* ---- dropzone bar --------------------------------------------------------- */
 

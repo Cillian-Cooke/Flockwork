@@ -110,8 +110,16 @@
 
   </section>
 
-  <!-- Floating tooltip -->
+  <!-- Floating tooltip (desktop hover) -->
   <div id="tooltip" class="tooltip" hidden></div>
+
+  <!-- Tap-to-inspect popup (mobile): tile / entity info -->
+  <div id="cell-popup-overlay" class="cell-popup-overlay" hidden>
+    <div class="cell-popup">
+      <button class="cell-popup-close" id="cell-popup-close" aria-label="close">×</button>
+      <div id="cell-popup-body"></div>
+    </div>
+  </div>
 
   <!-- Bottom dropzone bar -->
   <footer class="dropzone-bar" id="dropzone">

@@ -797,25 +797,156 @@ function describeEntity(e) {
     `<div>${role}</div><div class="tt-sub">loop: ${pattern}</div>${abilities}`;
 }
 
-boardEl.addEventListener("mousemove", e => {
-  const cell = e.target.closest(".cell");
-  if (!cell || !lastSnapshot) { tooltip.hidden = true; return; }
+// Shared by the desktop hover tooltip and the mobile tap popup.
+function cellInfoHTML(cell) {
+  if (!lastSnapshot) return null;
   const r = Number(cell.dataset.worldR ?? cell.dataset.r);
   const c = Number(cell.dataset.worldC ?? cell.dataset.c);
   const ent = entityAt(lastSnapshot.gmap, r, c);
-  tooltip.innerHTML = ent
-    ? describeEntity(ent)
-    : (() => {
-        const tid  = Number(cell.dataset.terrain);
-        const info = describeTerrain(tid);
-        return `<div class="tt-title">${info.name} (${tid})</div>` +
-               `<div>${info.desc}</div><div class="tt-sub">[${r}][${c}]</div>`;
-      })();
+  if (ent) return describeEntity(ent);
+  const tid  = Number(cell.dataset.terrain);
+  const info = describeTerrain(tid);
+  return `<div class="tt-title">${info.name} (${tid})</div>` +
+         `<div>${info.desc}</div><div class="tt-sub">[${r}][${c}]</div>`;
+}
+
+boardEl.addEventListener("mousemove", e => {
+  const cell = e.target.closest(".cell");
+  const html = cell && cellInfoHTML(cell);
+  if (!html) { tooltip.hidden = true; return; }
+  tooltip.innerHTML  = html;
   tooltip.hidden     = false;
   tooltip.style.left = `${e.clientX + 14}px`;
   tooltip.style.top  = `${e.clientY + 14}px`;
 });
 boardEl.addEventListener("mouseleave", () => { tooltip.hidden = true; });
+
+// --- mobile board: tap a tile/enemy for an info popup; pinch/drag to zoom & pan
+// (touch only — desktop keeps the hover tooltip above untouched).
+
+const cellPopupOverlay = document.getElementById("cell-popup-overlay");
+const cellPopupBody    = document.getElementById("cell-popup-body");
+const cellPopupClose   = document.getElementById("cell-popup-close");
+
+let cellPopupOpenedAt = 0;
+function showCellPopup(html) {
+  cellPopupBody.innerHTML = html;
+  cellPopupOverlay.hidden = false;
+  cellPopupOpenedAt = performance.now();
+}
+function hideCellPopup() { cellPopupOverlay.hidden = true; }
+cellPopupClose.addEventListener("click", hideCellPopup);
+cellPopupOverlay.addEventListener("click", e => {
+  // The same touch that opens the popup can leave behind a synthetic mouse
+  // "click" that lands on the now-visible overlay — ignore it for a beat so
+  // the popup we just opened doesn't immediately close itself.
+  if (performance.now() - cellPopupOpenedAt < 350) return;
+  if (e.target === cellPopupOverlay) hideCellPopup();
+});
+
+const CAM_MIN_SCALE = 1;
+const CAM_MAX_SCALE = 4;
+const TAP_MOVE_THRESHOLD = 8; // px — beyond this a touch is a pan, not a tap
+
+function applyCam(b) {
+  if (!b) return;
+  const { scale, x, y } = b.cam;
+  b.boardEl.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+}
+
+// Keep the (possibly zoomed) board from panning entirely out of view.
+function clampCam(b) {
+  const stage = b.boardEl.closest(".board-stage");
+  if (!stage) return;
+  const contentSize = b.screenDim * b.cellSize * b.cam.scale;
+  const maxX = Math.max(0, (contentSize - stage.clientWidth)  / 2);
+  const maxY = Math.max(0, (contentSize - stage.clientHeight) / 2);
+  b.cam.x = Math.max(-maxX, Math.min(maxX, b.cam.x));
+  b.cam.y = Math.max(-maxY, Math.min(maxY, b.cam.y));
+}
+
+const touchPoints   = new Map(); // pointerId -> {x,y}
+let touchGestureMoved = false;
+let tapStart           = null;  // {x,y} of the sole touch when it started
+let panOrigin           = null; // board.cam snapshot when the pan/pinch began
+let pinchStartDist      = null;
+let pinchStartMid       = null;
+
+function midpoint(pts) {
+  const [a, b] = pts;
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+function distance(pts) {
+  const [a, b] = pts;
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+boardEl.addEventListener("pointerdown", e => {
+  if (e.pointerType !== "touch") return;
+  touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (touchPoints.size === 1) {
+    touchGestureMoved = false;
+    tapStart  = { x: e.clientX, y: e.clientY };
+    panOrigin = board ? { ...board.cam } : null;
+  } else if (touchPoints.size === 2 && board) {
+    touchGestureMoved = true; // multi-touch is never a tap
+    hideCellPopup();
+    const pts = [...touchPoints.values()];
+    pinchStartDist  = distance(pts);
+    pinchStartMid   = midpoint(pts);
+    panOrigin       = { ...board.cam };
+  }
+});
+
+boardEl.addEventListener("pointermove", e => {
+  if (e.pointerType !== "touch" || !touchPoints.has(e.pointerId) || !board) return;
+  touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (touchPoints.size === 1 && panOrigin) {
+    const dx = e.clientX - tapStart.x, dy = e.clientY - tapStart.y;
+    if (!touchGestureMoved && Math.hypot(dx, dy) < TAP_MOVE_THRESHOLD) return;
+    touchGestureMoved = true;
+    e.preventDefault();
+    board.cam.x = panOrigin.x + dx;
+    board.cam.y = panOrigin.y + dy;
+    clampCam(board);
+    applyCam(board);
+  } else if (touchPoints.size === 2 && pinchStartDist && panOrigin) {
+    e.preventDefault();
+    const pts    = [...touchPoints.values()];
+    const dist   = distance(pts);
+    const mid    = midpoint(pts);
+    board.cam.scale = Math.max(CAM_MIN_SCALE, Math.min(CAM_MAX_SCALE,
+      panOrigin.scale * (dist / pinchStartDist)));
+    board.cam.x = panOrigin.x + (mid.x - pinchStartMid.x);
+    board.cam.y = panOrigin.y + (mid.y - pinchStartMid.y);
+    clampCam(board);
+    applyCam(board);
+  }
+});
+
+function touchEnd(e) {
+  if (e.pointerType !== "touch" || !touchPoints.has(e.pointerId)) return;
+  touchPoints.delete(e.pointerId);
+
+  if (touchPoints.size === 0) {
+    if (!touchGestureMoved && tapStart) {
+      const cell = document.elementFromPoint(tapStart.x, tapStart.y)?.closest(".cell");
+      const html = cell && cellInfoHTML(cell);
+      if (html) showCellPopup(html);
+    }
+    tapStart = null; panOrigin = null; pinchStartDist = null; pinchStartMid = null;
+  } else if (touchPoints.size === 1 && board) {
+    // Dropped from a pinch back to one finger — re-baseline so panning
+    // continues smoothly from here instead of jumping.
+    const [remaining] = touchPoints.values();
+    tapStart  = { ...remaining };
+    panOrigin = { ...board.cam };
+  }
+}
+boardEl.addEventListener("pointerup", touchEnd);
+boardEl.addEventListener("pointercancel", touchEnd);
 
 // --- input wiring --------------------------------------------------------
 
