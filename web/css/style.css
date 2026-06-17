@@ -76,7 +76,7 @@ body {
   margin-bottom: 2px;
   flex-shrink: 0;
 }
-.topbar-left  { /* empty spacer */ }
+.topbar-left  { display: flex; align-items: center; gap: 6px; }
 .topbar-right { display: flex; justify-content: flex-end; }
 
 .topbar-center { text-align: center; }
@@ -329,6 +329,7 @@ body {
 .chat-body {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
@@ -347,6 +348,34 @@ body {
 .chat-msg.error    { color: var(--accent2); font-weight: 600; }
 .chat-msg.sep      { color: var(--muted); }
 .chat-msg.map-line { color: #5a5250; }
+
+/* JSON log — live view of the save state */
+.log-json {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  white-space: pre;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  flex: 1;
+}
+.j-key { color: var(--accent); font-weight: 600; }
+.j-str { color: #2a8a2a; }
+
+.log-error {
+  background: #fff0ee;
+  border: 1px solid #f0c0b8;
+  border-radius: 7px;
+  color: #8a2020;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 10px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+  animation: pop 0.15s ease;
+}
 
 /* ---- timeline ------------------------------------------------------------- */
 
@@ -574,7 +603,7 @@ body {
   border: 1.5px solid var(--line);
   border-radius: 12px;
   padding: 6px 8px;
-  margin: 0 auto 4px;
+  margin: 6px auto 4px;
   box-shadow: var(--shadow-sm);
   display: flex;
   align-items: center;
@@ -584,10 +613,12 @@ body {
   flex-shrink: 0;
 }
 
-/* Fixed at 10 columns (ROUND_LENGTH) — always exactly one row, tiles shrink to fit. */
+/* Fixed at 10 columns (ROUND_LENGTH) — always exactly one row, tiles shrink to fit.
+   min-height keeps the panel at full tile-row height even when the hotbar is empty. */
 .hotbar {
   display: grid;
   grid-template-columns: repeat(10, minmax(0, 1fr));
+  grid-template-rows: clamp(28px, 8.5vw, 43px);
   gap: clamp(2px, 1.4vw, 6px);
   align-items: center;
   width: 100%;
@@ -623,6 +654,16 @@ body {
 
 /* Charge link: the 'r' tile that arms a charge, every tile while it's armed,
    and the move tile that finally fires it — see annotateCharges() in main.js */
+/* Active tile pulsing during playback */
+.tile.playing {
+  outline: 3px solid rgba(255,255,255,0.92);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(255,255,255,0.35), 0 4px 14px rgba(0,0,0,0.18);
+  transform: scale(1.08);
+  z-index: 2;
+  position: relative;
+}
+
 .tile.charge-active { box-shadow: inset 0 -4px 0 0 var(--charge); }
 .tile.charge-start  { outline: 2px solid var(--charge); outline-offset: 2px; }
 .tile.charge-end    { outline: 2px dashed var(--charge); outline-offset: 2px; }
@@ -824,6 +865,266 @@ body {
 }
 
 body { padding-bottom: 22px; }
+
+/* ---- Daily Maps button + modal -------------------------------------------- */
+
+.daily-btn {
+  background: var(--panel);
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 11px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.12s, border-color 0.12s;
+}
+.daily-btn:hover  { background: #f8f5f0; border-color: var(--accent); }
+.daily-btn.has-pack { border-color: var(--accent); }
+
+.daily-card { max-width: 420px; }
+.daily-pack-meta { font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+
+.daily-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 10px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.daily-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1.5px solid var(--line);
+  background: #f8f5f0;
+  transition: background 0.12s;
+}
+.daily-row.unlocked { background: #fff; }
+.daily-row.today    { border-color: var(--accent); background: #eef3ff; }
+.daily-row.locked   { opacity: 0.45; }
+
+.daily-day-num {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  min-width: 38px;
+  flex-shrink: 0;
+}
+.daily-day-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.daily-today-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: #dce8ff;
+  border-radius: 5px;
+  padding: 1px 5px;
+  letter-spacing: 0.3px;
+}
+.daily-done-badge {
+  font-size: 11px;
+  color: #2f9e44;
+  font-weight: 700;
+}
+
+.daily-play-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  padding: 5px 13px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: filter 0.1s;
+}
+.daily-play-btn:hover { filter: brightness(1.08); }
+.daily-play-btn.replay { background: #6a9060; }
+
+.daily-lock { font-size: 14px; flex-shrink: 0; }
+
+.daily-empty {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 20px 10px;
+  margin: 0;
+}
+.daily-empty code { background: #f0ede8; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); }
+
+/* ---- Field Guide codex ---------------------------------------------------- */
+
+.codex-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: rgba(20, 16, 12, 0.42);
+  display: flex;
+  align-items: flex-end;
+}
+.codex-overlay[hidden] { display: none; }
+
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+.codex-sheet {
+  width: 100%;
+  max-height: min(680px, 92dvh);
+  background: var(--panel);
+  border-radius: 20px 20px 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 -4px 32px rgba(0,0,0,0.14);
+  animation: sheet-up 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.codex-handle {
+  width: 40px;
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  margin: 10px auto 0;
+  flex-shrink: 0;
+}
+
+.codex-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 12px 20px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.codex-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -0.2px;
+}
+
+.codex-close {
+  background: none;
+  border: none;
+  font-size: 26px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 8px;
+  margin-right: -6px;
+}
+.codex-close:hover { color: var(--ink); }
+
+.codex-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+.codex-section {
+  padding: 14px 20px 2px;
+}
+
+.codex-section-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.codex-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+.codex-item:last-child { border-bottom: none; }
+
+.codex-badge {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 800;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.codex-swatch {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(0,0,0,0.07);
+}
+
+.codex-content { flex: 1; min-width: 0; }
+
+.codex-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.3;
+  margin-bottom: 3px;
+}
+
+.codex-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.codex-desc {
+  font-size: 12.5px;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.codex-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 1px;
+}
+.codex-sub b { color: var(--ink); font-weight: 700; }
+
+.codex-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
 
 /* ---- You Lose overlay ----------------------------------------------------- */
 

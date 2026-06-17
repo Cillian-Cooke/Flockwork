@@ -10,7 +10,10 @@
 
   <!-- Top bar: map title centred + round/tick meta + log toggle -->
   <header class="topbar">
-    <div class="topbar-left"></div>
+    <div class="topbar-left">
+      <button class="daily-btn" id="daily-btn" title="Daily Maps">📅</button>
+      <button class="daily-btn" id="guide-btn" title="Field Guide">📖</button>
+    </div>
     <div class="topbar-center">
       <h1 class="map-title" id="map-title">—</h1>
       <div class="map-meta" id="map-meta">R1 · T0</div>
@@ -149,6 +152,7 @@
     <div class="modal-card" role="dialog" aria-modal="true" aria-label="JSON format">
       <button class="modal-x" data-close aria-label="close">×</button>
       <h2>JSON Format</h2>
+      <p>Drop a <b>daily pack</b> — <code>{ "name", "start_date": "YYYY-MM-DD", "maps": [...] }</code> — to unlock one map per day. The 📅 button reopens the picker.</p>
       <p>The <b>same format</b> is used for creating a level and for saving / loading a game.
          The <code>rounds</code> and <code>current</code> fields are optional — omit them for a
          fresh level; they are included automatically when you download a saved game.</p>
@@ -178,6 +182,29 @@
   "rounds":  [["w","d","d"],["d","d","d","d","d"]],
   "current": []
 }</pre>
+    </div>
+  </div>
+
+  <!-- Daily Maps modal -->
+  <div id="daily-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="daily-backdrop"></div>
+    <div class="modal-card daily-card" role="dialog" aria-modal="true" aria-label="Daily Maps">
+      <button class="modal-x" id="daily-close" aria-label="close">×</button>
+      <h2 id="daily-modal-title">📅 Daily Maps</h2>
+      <p class="daily-pack-meta" id="daily-pack-meta"></p>
+      <div id="daily-list" class="daily-list"></div>
+    </div>
+  </div>
+
+  <!-- Field Guide codex (bottom sheet) -->
+  <div id="codex-overlay" class="codex-overlay" hidden>
+    <div class="codex-sheet">
+      <div class="codex-handle"></div>
+      <div class="codex-header">
+        <span class="codex-title">Field Guide</span>
+        <button class="codex-close" id="codex-close" aria-label="close">×</button>
+      </div>
+      <div class="codex-body" id="codex-body"></div>
     </div>
   </div>
 

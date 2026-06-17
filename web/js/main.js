@@ -19,6 +19,10 @@ let playingThrough = false;
 let loadedSave     = null;  // raw JSON of a loaded save file
 let lastSnapshot   = null;
 
+// Daily pack state
+let dailyPack     = null;  // loaded { start_date, name, maps[] }
+let dailyDayIndex = null;  // index of map currently being played (null = not in daily mode)
+
 // Rive board state
 let board         = null;
 let riveModule    = null;
@@ -48,6 +52,18 @@ const mapMetaEl      = document.getElementById("map-meta");
 const saveOptionsEl  = document.getElementById("save-options");
 const saveInfoEl     = document.getElementById("save-info");
 const youLoseCanvas  = document.getElementById("you-lose-canvas");
+
+// Daily modal refs
+const dailyModal   = document.getElementById("daily-modal");
+const dailyListEl  = document.getElementById("daily-list");
+const dailyTitleEl = document.getElementById("daily-modal-title");
+const dailyMetaEl  = document.getElementById("daily-pack-meta");
+const dailyBtn     = document.getElementById("daily-btn");
+
+// Field guide refs
+const codexOverlay = document.getElementById("codex-overlay");
+const codexBody    = document.getElementById("codex-body");
+const guideBtn     = document.getElementById("guide-btn");
 
 // --- helpers --------------------------------------------------------------
 
@@ -266,12 +282,14 @@ function makeTile(token, tickNo, solid, index, chargeInfo) {
 function renderHotbar() {
   hotbarEl.innerHTML = "";
   const n = currentMoves.length;
-  if (!n) return;
-  const displayed   = Array.from({ length: ROUND_LENGTH }, (_, i) => currentMoves[i % n]);
-  const chargeInfo  = annotateCharges(displayed);
-  for (let i = 0; i < ROUND_LENGTH; i++) {
-    hotbarEl.appendChild(makeTile(displayed[i], i + 1, i < n, i, chargeInfo));
+  if (n) {
+    const displayed   = Array.from({ length: ROUND_LENGTH }, (_, i) => currentMoves[i % n]);
+    const chargeInfo  = annotateCharges(displayed);
+    for (let i = 0; i < ROUND_LENGTH; i++) {
+      hotbarEl.appendChild(makeTile(displayed[i], i + 1, i < n, i, chargeInfo));
+    }
   }
+  refreshLogJSON();
 }
 
 // --- move management ------------------------------------------------------
@@ -285,7 +303,7 @@ function resetCurrentRound() {
 }
 
 function appendToken(token) {
-  if (playing || playingThrough) return;
+  if (playing || playingThrough || !lastSnapshot) return;
   currentMoves.push(token);
   renderHotbar();
   resetCurrentRound();
@@ -317,21 +335,18 @@ async function playRound() {
   playing = true;
   setControlsDisabled(true);
 
-  const roundNo = roundMoves.length + 1;
-  appendChatLine(`── Round ${roundNo} ──`, "header");
-
   for (let t = 1; t <= ROUND_LENGTH; t++) {
     const pos = roundMoves.length * ROUND_LENGTH + t;
     maxGlobalPos = pos;
     const snap = renderGlobal(pos);
 
-    const { token, events } = tickEventsFromSnap(snap);
-    for (const e of buildTickEntries(roundNo, t, token, events, snap.status)) {
-      appendChat([e]);
-    }
+    // Highlight the tile slot that is executing this tick.
+    const hotbarTiles = [...hotbarEl.children];
+    hotbarTiles.forEach((tile, i) => tile.classList.toggle("playing", i === t - 1));
 
     await delay(500);
     if (snap.status !== "playing") {
+      hotbarTiles.forEach(tile => tile.classList.remove("playing"));
       playing = false;
       setControlsDisabled(false);
       return;
@@ -339,6 +354,7 @@ async function playRound() {
   }
 
   // Bank the completed round; keep current position for review.
+  hotbarEl.querySelectorAll(".tile.playing").forEach(t => t.classList.remove("playing"));
   roundMoves.push(currentMoves.slice());
   currentMoves = [];
   renderHotbar();
@@ -352,14 +368,11 @@ async function animatePlaythrough(savedRounds, savedCurrent) {
   setControlsDisabled(true);
 
   for (let r = 0; r < savedRounds.length; r++) {
-    appendChatLine(`── Round ${r + 1} (replay) ──`, "header");
     for (let t = 1; t <= ROUND_LENGTH; t++) {
       if (!playingThrough) { setControlsDisabled(false); return; }
       const pos    = r * ROUND_LENGTH + t;
       maxGlobalPos = pos;
       const snap   = renderGlobal(pos);
-      const { token, events } = tickEventsFromSnap(snap);
-      for (const e of buildTickEntries(r + 1, t, token, events, snap.status)) appendChat([e]);
       await delay(500);
       if (snap.status !== "playing") break;
     }
@@ -367,14 +380,11 @@ async function animatePlaythrough(savedRounds, savedCurrent) {
 
   if (savedCurrent.length && playingThrough) {
     const r = savedRounds.length;
-    appendChatLine(`── Round ${r + 1} (current) ──`, "header");
     for (let t = 1; t <= savedCurrent.length; t++) {
       if (!playingThrough) break;
       const pos    = r * ROUND_LENGTH + t;
       maxGlobalPos = pos;
-      const snap   = renderGlobal(pos);
-      const { token, events } = tickEventsFromSnap(snap);
-      for (const e of buildTickEntries(r + 1, t, token, events, snap.status)) appendChat([e]);
+      renderGlobal(pos);
       await delay(500);
     }
   }
@@ -404,7 +414,7 @@ function buildSaveData() {
 
 function downloadSave() {
   const data = buildSaveData();
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const blob = new Blob([formatSaveJSON(data)], { type: "application/json" });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
   a.href     = url;
@@ -413,12 +423,161 @@ function downloadSave() {
   URL.revokeObjectURL(url);
 }
 
+// --- daily maps -----------------------------------------------------------
+
+function isDailyPack(data) {
+  return data && typeof data.start_date === "string" && Array.isArray(data.maps) && data.maps.length > 0;
+}
+
+function dailyPackKey(pack) {
+  return `flockwork_daily_${pack.name || "pack"}`;
+}
+
+function getDailyCompletions(pack) {
+  try { return JSON.parse(localStorage.getItem(dailyPackKey(pack)) || "[]"); }
+  catch { return []; }
+}
+
+function markDailyComplete(pack, idx) {
+  const done = getDailyCompletions(pack);
+  if (!done.includes(idx)) {
+    done.push(idx);
+    localStorage.setItem(dailyPackKey(pack), JSON.stringify(done));
+    // Refresh the modal list in the background so it reflects the win next time it's opened
+  }
+}
+
+function dailyAvailableCount(pack) {
+  const [sy, sm, sd] = pack.start_date.split("-").map(Number);
+  const start = Date.UTC(sy, sm - 1, sd);
+  const [ty, tm, td] = new Date().toISOString().slice(0, 10).split("-").map(Number);
+  const todayUTC = Date.UTC(ty, tm - 1, td);
+  const daysSince = Math.floor((todayUTC - start) / 86400000);
+  return Math.min(pack.maps.length, Math.max(0, daysSince + 1));
+}
+
+function dailyTodayIndex(pack) {
+  const [sy, sm, sd] = pack.start_date.split("-").map(Number);
+  const start = Date.UTC(sy, sm - 1, sd);
+  const [ty, tm, td] = new Date().toISOString().slice(0, 10).split("-").map(Number);
+  const todayUTC = Date.UTC(ty, tm - 1, td);
+  return Math.floor((todayUTC - start) / 86400000);
+}
+
+function renderDailyList() {
+  if (!dailyPack) return;
+  const available   = dailyAvailableCount(dailyPack);
+  const completions = getDailyCompletions(dailyPack);
+  const todayIdx    = dailyTodayIndex(dailyPack);
+
+  dailyListEl.innerHTML = "";
+  dailyPack.maps.forEach((map, idx) => {
+    const unlocked = idx < available;
+    const isToday  = idx === todayIdx && idx < dailyPack.maps.length;
+    const done     = completions.includes(idx);
+
+    const row = document.createElement("div");
+    row.className = ["daily-row", unlocked ? "unlocked" : "locked", isToday ? "today" : ""].filter(Boolean).join(" ");
+
+    const num = document.createElement("div");
+    num.className = "daily-day-num";
+    num.textContent = `Day ${idx + 1}`;
+
+    const name = document.createElement("div");
+    name.className = "daily-day-name";
+    name.textContent = map.name || `Day ${idx + 1}`;
+
+    if (isToday) {
+      const b = document.createElement("span");
+      b.className = "daily-today-badge";
+      b.textContent = "Today";
+      name.appendChild(b);
+    }
+    if (done) {
+      const b = document.createElement("span");
+      b.className = "daily-done-badge";
+      b.textContent = "✓";
+      name.appendChild(b);
+    }
+
+    row.appendChild(num);
+    row.appendChild(name);
+
+    if (unlocked) {
+      const btn = document.createElement("button");
+      btn.className = "daily-play-btn" + (done ? " replay" : "");
+      btn.textContent = done ? "Replay" : "Play";
+      btn.addEventListener("click", () => playDailyDay(idx));
+      row.appendChild(btn);
+    } else {
+      const lock = document.createElement("span");
+      lock.className = "daily-lock";
+      lock.textContent = "🔒";
+      row.appendChild(lock);
+    }
+
+    dailyListEl.appendChild(row);
+  });
+}
+
+function showDailyModal() {
+  if (!dailyPack) {
+    dailyTitleEl.textContent = "📅 Daily Maps";
+    dailyMetaEl.textContent  = "";
+    dailyListEl.innerHTML    = '<p class="daily-empty">Drop a daily pack <code>.json</code> file onto the page to unlock daily challenges.</p>';
+    dailyModal.hidden = false;
+    return;
+  }
+  const available = dailyAvailableCount(dailyPack);
+  dailyTitleEl.textContent = `📅 ${dailyPack.name || "Daily Maps"}`;
+  dailyMetaEl.textContent  = `${available} of ${dailyPack.maps.length} day${dailyPack.maps.length !== 1 ? "s" : ""} unlocked`;
+  renderDailyList();
+  dailyModal.hidden = false;
+}
+
+async function playDailyDay(idx) {
+  if (!dailyPack) return;
+  dailyModal.hidden = true;
+
+  // Animate the current map away before loading the next one
+  if (lastSnapshot && board && board.animCells.size > 0) {
+    // Reverse all tile animations at 2.5× speed (visible fade ≈ 200 ms, gone by 400 ms)
+    for (const anim of board.animCells.values()) {
+      anim.target = 0;
+      anim.speed  = 2.5;
+    }
+    // Clear entity glyphs so they don't float over the receding tiles
+    for (let i = 0; i < board.screenDim; i++) {
+      for (let j = 0; j < board.screenDim; j++) {
+        const c = board.cells[i][j];
+        c.div.classList.remove('ent-hero', 'ent-enemy', 'ent-sheep', 'blocked', 'barrier', 'charging');
+        delete c.div.dataset.entity;
+        c.inner.textContent = '';
+        c.inner.className   = 'cell-inner';
+      }
+    }
+    // Wait for tiles to finish fading + half-second pause
+    await new Promise(r => setTimeout(r, 550));
+    board.animCells.clear();
+  }
+
+  loadLevelData(dailyPack.maps[idx], `Daily Day ${idx + 1}`, idx);
+}
+
+function loadDailyPack(pack, sourceName) {
+  dailyPack = pack;
+  dailyBtn.classList.add("has-pack");
+  showDailyModal();
+}
+
+dailyBtn.addEventListener("click", showDailyModal);
+document.getElementById("daily-close").addEventListener("click", () => { dailyModal.hidden = true; });
+document.getElementById("daily-backdrop").addEventListener("click", () => { dailyModal.hidden = true; });
+
 // --- load / save handling -------------------------------------------------
 
-function initChatForMap(levelData) {
-  chatBody.innerHTML = "";
-  const gmap = buildGameMap(levelData);
-  appendChat(buildInitialLog(gmap));
+function initChatForMap() {
+  refreshLogJSON();
 }
 
 function resetGame() {
@@ -443,8 +602,9 @@ function showSaveOptions(data) {
   saveOptionsEl.hidden = false;
 }
 
-function loadLevelData(data, sourceName = "custom map") {
+function loadLevelData(data, sourceName = "custom map", dailyCtx = null) {
   if (playing || playingThrough) return;
+  dailyDayIndex = dailyCtx; // null unless called from playDailyDay
   try { buildGameMap(data); }
   catch (err) {
     const why = err instanceof MapError ? err.message : String(err);
@@ -479,15 +639,12 @@ function loadLevelData(data, sourceName = "custom map") {
   } else {
     resetGame();
     initChatForMap(data);
-    appendChatLine(`✓ Loaded "${data.name || sourceName}"`, "header");
   }
 }
 
 // Save-option button handlers
 document.getElementById("opt-continue").addEventListener("click", () => {
   saveOptionsEl.hidden = true;
-  // roundMoves + currentMoves already set; player queues more and presses Play
-  appendChatLine(`▶ Continuing — round ${roundMoves.length + 1}`, "header");
 });
 
 document.getElementById("opt-playthrough").addEventListener("click", () => {
@@ -507,7 +664,6 @@ document.getElementById("opt-playthrough").addEventListener("click", () => {
 document.getElementById("opt-restart").addEventListener("click", () => {
   saveOptionsEl.hidden = true;
   resetGame();
-  appendChatLine("↺ Restarted from scratch.", "header");
 });
 
 // --- timeline dots (click handlers are in updateTimelineDots) -------
@@ -753,18 +909,109 @@ document.querySelectorAll(".controls [data-token]").forEach(btn => {
   });
 });
 
-// --- chat -----------------------------------------------------------------
+// --- chat / JSON log ------------------------------------------------------
+
+// Tokenise raw JSON and wrap keys/strings in colour spans.
+function highlightJSON(raw) {
+  let out = '', i = 0;
+  while (i < raw.length) {
+    const ch = raw[i];
+    if (ch === '"') {
+      // Walk to the closing quote, respecting backslash escapes.
+      let j = i + 1;
+      while (j < raw.length && raw[j] !== '"') { if (raw[j] === '\\') j++; j++; }
+      const str = raw.slice(i, j + 1);
+      // Peek past whitespace — colon next means this is a key.
+      let k = j + 1;
+      while (k < raw.length && (raw[k] === ' ' || raw[k] === '\n' || raw[k] === '\t')) k++;
+      const esc = str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      out += raw[k] === ':' ? `<span class="j-key">${esc}</span>` : `<span class="j-str">${esc}</span>`;
+      i = j + 1;
+    } else {
+      out += ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch;
+      i++;
+    }
+  }
+  return out;
+}
+
+// Format the grid so every row is on one line and all columns align.
+// The column width is the widest cell (in JSON notation) across the whole grid,
+// so the spacing is uniform. Matches the hand-written codebase example format.
+function formatGridRows(grid) {
+  if (!grid || !grid.length) return [];
+  let colMax = 0;
+  for (const row of grid)
+    for (const cell of row)
+      colMax = Math.max(colMax, JSON.stringify(cell).length);
+  return grid.map(row => {
+    const cells = row.map(c => JSON.stringify(c));
+    return '[' + cells.map((c, i) =>
+      i < cells.length - 1
+        ? c + ',' + ' '.repeat(colMax - c.length + 1)
+        : c + ' '.repeat(colMax - c.length)
+    ).join('') + ']';
+  });
+}
+
+function formatSaveJSON(data) {
+  const gridRows = formatGridRows(data.grid || []);
+  const scripts  = data.scripts || {};
+  const rounds   = data.rounds  || [];
+  const current  = data.current || [];
+
+  const scriptStr = Object.keys(scripts).length === 0
+    ? '{}'
+    : '{ ' + Object.entries(scripts)
+        .map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`)
+        .join(', ') + ' }';
+
+  const lines = ['{', `  "name": ${JSON.stringify(data.name ?? '')},`];
+
+  if (gridRows.length === 0) {
+    lines.push('  "grid": [],');
+  } else {
+    lines.push('  "grid": [');
+    gridRows.forEach((r, i) => lines.push(`    ${r}${i < gridRows.length - 1 ? ',' : ''}`));
+    lines.push('  ],');
+  }
+
+  lines.push(`  "scripts": ${scriptStr},`);
+
+  if (rounds.length === 0) {
+    lines.push('  "rounds": [],');
+  } else {
+    lines.push('  "rounds": [');
+    rounds.forEach((r, i) => lines.push(`    ${JSON.stringify(r)}${i < rounds.length - 1 ? ',' : ''}`));
+    lines.push('  ],');
+  }
+
+  lines.push(`  "current": ${JSON.stringify(current)}`);
+  lines.push('}');
+  return lines.join('\n');
+}
+
+function refreshLogJSON() {
+  const raw = formatSaveJSON(buildSaveData());
+  chatBody.innerHTML = `<pre class="log-json">${highlightJSON(raw)}</pre>`;
+}
+
+function showChatError(text) {
+  const div = document.createElement("div");
+  div.className = "log-error";
+  div.textContent = text;
+  chatBody.prepend(div);
+  setTimeout(() => div.remove(), 5000);
+}
 
 function appendChat(entries) {
   for (const { cls, text } of entries) {
-    const div = document.createElement("div");
-    div.className   = `chat-msg ${cls}`;
-    div.textContent = text;
-    chatBody.appendChild(div);
+    if (cls === "error") showChatError(text);
   }
-  chatBody.scrollTop = chatBody.scrollHeight;
 }
-function appendChatLine(text, cls = "sep") { appendChat([{ cls, text }]); }
+function appendChatLine(text, cls = "sep") {
+  if (cls === "error") showChatError(text);
+}
 
 chatToggle.addEventListener("click", () => {
   chatPopup.hidden = !chatPopup.hidden;
@@ -985,6 +1232,7 @@ function loadFromFile(file) {
     let data;
     try { data = JSON.parse(reader.result); }
     catch (err) { appendChatLine(`invalid JSON: ${err.message}`, "error"); return; }
+    if (isDailyPack(data)) { loadDailyPack(data, file.name); return; }
     loadLevelData(data, file.name);
   };
   reader.onerror = () => appendChatLine(`could not read "${file.name}"`, "error");
@@ -1004,12 +1252,107 @@ window.addEventListener("drop", e => {
   loadFromFile(e.dataTransfer.files[0]);
 });
 
+// --- field guide codex -------------------------------------------------------
+
+const CODEX_ENTITY_COLOR = {
+  knight: '#2c4d8a', rogue: '#2f9e44', mage: '#8e5ad4',
+  brute: '#c2530c', hunter: '#d4a017',
+};
+const CODEX_KIND_COLOR = { [HERO]: '#2c5de5', [ENEMY]: '#d43030', [SHEEP]: '#c8c0a8' };
+const CODEX_TERRAIN_COLOR = {
+  0:'#3a3530', 1:'#7ec87c', 2:'#b0a89e', 3:'#e86040', 4:'#58b8d8',
+  5:'#e8c840', 6:'#8e5ad4', 7:'#3ab8a8', 8:'#e89a40', 9:'#e068a0',
+  10:'#5ad0e0', 11:'#f0d878', 12:'#d83ad8', 13:'#ff5ab0',
+};
+
+function buildCodexHTML(gmap) {
+  if (!gmap) {
+    return '<p class="codex-empty">Load a map to see its field guide.</p>';
+  }
+
+  let html = '';
+
+  // Entities — heroes first, then enemies, then sheep.
+  const kindOrder = { [HERO]: 0, [ENEMY]: 1, [SHEEP]: 2 };
+  const entities = [...gmap.entities].sort((a, b) =>
+    (kindOrder[a.kind] ?? 3) - (kindOrder[b.kind] ?? 3));
+
+  if (entities.length) {
+    html += '<div class="codex-section"><div class="codex-section-label">Entities on this map</div>';
+    for (const e of entities) {
+      const kindName = e.kind === HERO ? 'Hero' : e.kind === ENEMY ? 'Enemy' : 'Sheep';
+      const typeName = e.entityType
+        ? e.entityType.charAt(0).toUpperCase() + e.entityType.slice(1) : '';
+      const color     = CODEX_ENTITY_COLOR[e.entityType] ?? CODEX_KIND_COLOR[e.kind] ?? '#888';
+      const textColor = e.kind === SHEEP ? '#3a3530' : '#fff';
+      const role = e.kind === HERO
+        ? 'Player-controlled. Queue moves in the hotbar and press Play.'
+        : e.kind === SHEEP
+          ? 'Clear all sheep to win. They move as a flock and can be pushed.'
+          : 'Runs a fixed move loop. Kills your hero on contact.';
+      const loop = e.kind !== HERO && e.loop.length
+        ? `<div class="codex-sub">Loop: <b>${e.loop.join(' ')}</b></div>` : '';
+      const info = ABILITY_INFO[e.entityType];
+      const abilities = info
+        ? `<div class="codex-sub">e — ${info.e}</div>` +
+          `<div class="codex-sub">r — ${info.r}</div>` +
+          (info.move ? `<div class="codex-sub">${info.move}</div>` : '') : '';
+      const kindTag = typeName ? `<span class="codex-tag">${kindName}</span>` : '';
+      const displayName = typeName || kindName;
+
+      html += `<div class="codex-item">
+        <div class="codex-badge" style="background:${color};color:${textColor}">${e.letter}</div>
+        <div class="codex-content">
+          <div class="codex-name">${displayName}${kindTag}</div>
+          <div class="codex-desc">${role}</div>
+          ${loop}${abilities}
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  // Terrain — all unique IDs present, sorted by ID.
+  const counts = new Map();
+  for (const row of gmap.terrain)
+    for (const tid of row) counts.set(tid, (counts.get(tid) || 0) + 1);
+
+  const terrainEntries = [...counts.entries()].sort((a, b) => a[0] - b[0]);
+  if (terrainEntries.length) {
+    html += '<div class="codex-section"><div class="codex-section-label">Terrain on this map</div>';
+    for (const [tid, count] of terrainEntries) {
+      const info  = describeTerrain(tid);
+      const color = CODEX_TERRAIN_COLOR[tid] ?? CODEX_TERRAIN_COLOR[1];
+      html += `<div class="codex-item">
+        <div class="codex-swatch" style="background:${color}"></div>
+        <div class="codex-content">
+          <div class="codex-name">${info.name}<span class="codex-tag">${count} tile${count !== 1 ? 's' : ''}</span></div>
+          <div class="codex-desc">${info.desc}</div>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  return html || '<p class="codex-empty">Nothing to show.</p>';
+}
+
+function openCodex()  {
+  codexBody.innerHTML = buildCodexHTML(lastSnapshot?.gmap ?? null);
+  codexOverlay.hidden = false;
+}
+function closeCodex() { codexOverlay.hidden = true; }
+
+guideBtn.addEventListener("click", openCodex);
+document.getElementById("codex-close").addEventListener("click", closeCodex);
+codexOverlay.addEventListener("click", e => { if (e.target === codexOverlay) closeCodex(); });
+
 // --- format help modal ---------------------------------------------------
 
 const formatModal = document.getElementById("format-modal");
 document.getElementById("format-help").addEventListener("click", () => { formatModal.hidden = false; });
 formatModal.addEventListener("click", e => { if (e.target.hasAttribute("data-close")) formatModal.hidden = true; });
-window.addEventListener("keydown", e => { if (e.key === "Escape") formatModal.hidden = true; }, true);
+window.addEventListener("keydown", e => { if (e.key === "Escape") { formatModal.hidden = true; dailyModal.hidden = true; closeCodex(); } }, true);
 
 // --- you-lose overlay ----------------------------------------------------
 
@@ -1025,14 +1368,14 @@ function checkGameStatus(snap) {
   } else {
     youLoseCanvas.hidden = true;
   }
+  if (snap.status === "win" && dailyPack && dailyDayIndex !== null) {
+    markDailyComplete(dailyPack, dailyDayIndex);
+  }
 }
 
 // --- boot ----------------------------------------------------------------
 
 (async () => {
-  const defaultLevel = getActiveLevel();
-  mapTitleEl.textContent = shortTitle(defaultLevel.name);
-  initChatForMap(defaultLevel);
   renderHotbar();
 
   // Initialise Rive runtime and pre-render all terrain filmstrips
@@ -1043,11 +1386,26 @@ function checkGameStatus(snap) {
     console.error("Rive init failed — serve over http (not file://):", err);
   }
 
-  // Build the persistent board grid
-  const vision = parseInt(defaultLevel.vision || 5, 10);
-  board = initBoard(boardEl, vision);
+  // Build the persistent board grid (vision 5 default; resized when a map loads)
+  board = initBoard(boardEl, 5);
   board.filmstrips = filmstrips;
   if (filmstrips) startRafLoop(board);
 
-  renderGlobal(0);
+  // Auto-load today's daily map from the bundled pack
+  try {
+    const res = await fetch("../maps/daily_pack.json");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const pack = await res.json();
+    if (isDailyPack(pack)) {
+      dailyPack = pack;
+      dailyBtn.classList.add("has-pack");
+      const available = dailyAvailableCount(pack);
+      if (available > 0) {
+        const idx = Math.min(Math.max(0, dailyTodayIndex(pack)), available - 1);
+        loadLevelData(pack.maps[idx], `Daily Day ${idx + 1}`, idx);
+      }
+    }
+  } catch {
+    appendChatLine("📅 Drop a daily pack or map .json to get started.", "header");
+  }
 })();
