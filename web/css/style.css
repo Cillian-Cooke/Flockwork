@@ -1138,3 +1138,111 @@ body { padding-bottom: 22px; }
   display: block;
 }
 .you-lose-overlay[hidden] { display: none; }
+
+/* ---- Win / Lose end overlay ----------------------------------------------- */
+
+.end-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(20, 16, 12, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: pop 0.22s ease;
+}
+.end-overlay[hidden] { display: none; }
+
+.end-card {
+  position: relative;
+  width: min(380px, 100%);
+  background: var(--panel);
+  border-radius: 20px;
+  padding: 28px 24px 24px;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.28);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.end-card.win  { border-top: 5px solid #2f9e44; }
+.end-card.lose { border-top: 5px solid #d43030; }
+
+.end-emoji {
+  font-size: 48px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.end-title {
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+.end-card.win  .end-title { color: #2f9e44; }
+.end-card.lose .end-title { color: #d43030; }
+
+.end-map-name {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.end-stats {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  background: #f8f5f0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin: 6px 0 10px;
+  line-height: 1.6;
+}
+
+.end-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.end-row {
+  display: flex;
+  gap: 8px;
+}
+.end-row .end-btn { flex: 1; }
+
+.end-btn {
+  border: none;
+  border-radius: 11px;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 0.12s, transform 0.08s;
+  width: 100%;
+}
+.end-btn:hover  { filter: brightness(1.06); }
+.end-btn:active { transform: translateY(1px); }
+
+.end-btn-primary { background: var(--accent); color: #fff; }
+.end-btn-next    { background: #2f9e44;       color: #fff; }
+.end-btn-ghost {
+  background: #f0ede8;
+  color: var(--ink);
+  border: 1.5px solid var(--line);
+  font-size: 13px;
+}
+.end-btn-sm { padding: 9px 10px; font-size: 12px; }
+
+.end-copy-confirm {
+  font-size: 11px;
+  color: #2f9e44;
+  font-weight: 600;
+  margin-top: 2px;
+  min-height: 16px;
+}

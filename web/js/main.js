@@ -28,6 +28,7 @@ let board         = null;
 let riveModule    = null;
 let filmstrips    = null;
 let youLosePlayed = false;
+let endShown      = false;
 
 const KEYMAP = { w:"w",a:"a",s:"s",d:"d",t:"t",f:"f",g:"g",h:"h",e:"e",r:"r",".":"." };
 const SYMBOL  = { w:"↑",s:"↓",a:"←",d:"→",t:"↑",f:"←",g:"↓",h:"→",e:"e",r:"r",".":"·" };
@@ -64,6 +65,15 @@ const dailyBtn     = document.getElementById("daily-btn");
 const codexOverlay = document.getElementById("codex-overlay");
 const codexBody    = document.getElementById("codex-body");
 const guideBtn     = document.getElementById("guide-btn");
+
+// End overlay refs
+const endOverlay  = document.getElementById("end-overlay");
+const endCard     = document.getElementById("end-card");
+const endEmoji    = document.getElementById("end-emoji");
+const endTitle    = document.getElementById("end-title");
+const endMapName  = document.getElementById("end-map-name");
+const endStats    = document.getElementById("end-stats");
+const endNext     = document.getElementById("end-next");
 
 // --- helpers --------------------------------------------------------------
 
@@ -587,7 +597,9 @@ function resetGame() {
   maxGlobalPos  = 0;
   loadedSave    = null;
   youLosePlayed = false;
+  endShown      = false;
   if (youLoseCanvas) youLoseCanvas.hidden = true;
+  endOverlay.hidden = true;
   saveOptionsEl.hidden = true;
   renderHotbar();
   renderGlobal(0);
@@ -604,7 +616,8 @@ function showSaveOptions(data) {
 
 function loadLevelData(data, sourceName = "custom map", dailyCtx = null) {
   if (playing || playingThrough) return;
-  dailyDayIndex = dailyCtx; // null unless called from playDailyDay
+  dailyDayIndex = dailyCtx;
+  hideEndOverlay();
   try { buildGameMap(data); }
   catch (err) {
     const why = err instanceof MapError ? err.message : String(err);
@@ -1354,24 +1367,114 @@ document.getElementById("format-help").addEventListener("click", () => { formatM
 formatModal.addEventListener("click", e => { if (e.target.hasAttribute("data-close")) formatModal.hidden = true; });
 window.addEventListener("keydown", e => { if (e.key === "Escape") { formatModal.hidden = true; dailyModal.hidden = true; closeCodex(); } }, true);
 
-// --- you-lose overlay ----------------------------------------------------
+// --- end overlay (win / lose) ---------------------------------------------
 
-function checkGameStatus(snap) {
-  if (!youLoseCanvas) return;
-  if (snap.status === "lose") {
-    if (!youLosePlayed) {
-      youLosePlayed = true;
-      playYouLose(youLoseCanvas);
-    } else {
-      youLoseCanvas.hidden = false;
-    }
-  } else {
-    youLoseCanvas.hidden = true;
+function gameStats() {
+  // Total completed ticks = maxGlobalPos (each tick is one queued action)
+  const ticks  = maxGlobalPos;
+  const rounds = Math.floor(ticks / ROUND_LENGTH);
+  const extra  = ticks % ROUND_LENGTH;
+  const actions = roundMoves.reduce((s, r) => s + r.length, 0) +
+                  (extra > 0 ? currentMoves.slice(0, extra).length : 0);
+  return { ticks, rounds, extra, actions };
+}
+
+function showEndOverlay(status) {
+  if (endShown) return;
+  endShown = true;
+
+  const isWin = status === "win";
+  const level = getActiveLevel();
+  const { rounds, extra, ticks } = gameStats();
+
+  // Trigger the lose canvas animation in the background
+  if (!isWin && youLoseCanvas && !youLosePlayed) {
+    youLosePlayed = true;
+    youLoseCanvas.hidden = false;
+    playYouLose(youLoseCanvas);
   }
-  if (snap.status === "win" && dailyPack && dailyDayIndex !== null) {
+
+  endCard.className = `end-card ${isWin ? "win" : "lose"}`;
+  endEmoji.textContent  = isWin ? "🎉" : "💀";
+  endTitle.textContent  = isWin ? "YOU WIN!" : "YOU LOSE";
+  endMapName.textContent = shortTitle(level.name, 30);
+
+  const roundStr  = rounds === 1 ? "1 round" : `${rounds} rounds`;
+  const extraStr  = extra  > 0 ? ` + ${extra} tick${extra !== 1 ? "s" : ""}` : "";
+  endStats.textContent = isWin
+    ? `${roundStr}${extraStr} · ${ticks} total ticks`
+    : `Eliminated in ${roundStr}${extraStr}`;
+
+  // "Next Day" button — only on win in daily mode with an available next map
+  const nextIdx = dailyDayIndex !== null ? dailyDayIndex + 1 : -1;
+  const nextAvail = dailyPack && nextIdx < dailyAvailableCount(dailyPack);
+  endNext.hidden = !(isWin && nextAvail);
+
+  if (isWin && dailyPack && dailyDayIndex !== null) {
     markDailyComplete(dailyPack, dailyDayIndex);
   }
+
+  endOverlay.hidden = false;
 }
+
+function hideEndOverlay() {
+  endOverlay.hidden = true;
+  endShown = false;
+  if (youLoseCanvas) youLoseCanvas.hidden = true;
+}
+
+function checkGameStatus(snap) {
+  if (snap.status !== "playing" && !endShown) {
+    showEndOverlay(snap.status);
+  }
+  if (snap.status === "playing") {
+    // Scrubbing back to before the game end — hide the overlay
+    hideEndOverlay();
+  }
+}
+
+// End overlay button wiring
+document.getElementById("end-retry").addEventListener("click", () => {
+  hideEndOverlay();
+  resetGame();
+  initChatForMap(getActiveLevel());
+  appendChatLine("↺ Retrying…", "header");
+});
+
+endNext.addEventListener("click", () => {
+  hideEndOverlay();
+  if (dailyPack && dailyDayIndex !== null) playDailyDay(dailyDayIndex + 1);
+});
+
+document.getElementById("end-watch").addEventListener("click", () => {
+  hideEndOverlay();
+  const savedRounds  = roundMoves.map(r => [...r]);
+  const savedCurrent = [...currentMoves];
+  roundMoves   = savedRounds;
+  currentMoves = savedCurrent;
+  globalPos    = 0;
+  maxGlobalPos = 0;
+  renderGlobal(0);
+  animatePlaythrough(savedRounds, savedCurrent);
+});
+
+document.getElementById("end-download").addEventListener("click", () => {
+  downloadSave();
+});
+
+document.getElementById("end-copy").addEventListener("click", async () => {
+  const json = formatSaveJSON(buildSaveData());
+  try {
+    await navigator.clipboard.writeText(json);
+    const btn = document.getElementById("end-copy");
+    const orig = btn.textContent;
+    btn.textContent = "✓ Copied!";
+    setTimeout(() => { btn.textContent = orig; }, 1800);
+  } catch {
+    // Clipboard not available — fall back to download
+    downloadSave();
+  }
+});
 
 // --- boot ----------------------------------------------------------------
 
@@ -1393,7 +1496,7 @@ function checkGameStatus(snap) {
 
   // Auto-load today's daily map from the bundled pack
   try {
-    const res = await fetch("../maps/daily_pack.json");
+    const res = await fetch("./maps/daily_pack.json");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const pack = await res.json();
     if (isDailyPack(pack)) {

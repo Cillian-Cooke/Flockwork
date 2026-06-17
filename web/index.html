@@ -208,8 +208,27 @@
     </div>
   </div>
 
-  <!-- Full-screen You Lose animation overlay (hidden until game ends in defeat) -->
+  <!-- Full-screen You Lose animation overlay (behind the end card) -->
   <canvas id="you-lose-canvas" class="you-lose-overlay" hidden></canvas>
+
+  <!-- Win / Lose end screen -->
+  <div id="end-overlay" class="end-overlay" hidden>
+    <div class="end-card" id="end-card">
+      <div class="end-emoji" id="end-emoji"></div>
+      <div class="end-title" id="end-title"></div>
+      <div class="end-map-name" id="end-map-name"></div>
+      <div class="end-stats" id="end-stats"></div>
+      <div class="end-actions">
+        <button class="end-btn end-btn-primary" id="end-retry">↺ Retry</button>
+        <button class="end-btn end-btn-next" id="end-next" hidden>Next Day →</button>
+        <button class="end-btn end-btn-ghost" id="end-watch">⏵ Watch Replay</button>
+        <div class="end-row">
+          <button class="end-btn end-btn-ghost end-btn-sm" id="end-download">⬇ Download JSON</button>
+          <button class="end-btn end-btn-ghost end-btn-sm" id="end-copy">📋 Copy JSON</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="js/main.js"></script>
 </body>
