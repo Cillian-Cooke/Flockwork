@@ -116,22 +116,29 @@ export function updateBoard(board, gmap) {
   if (!gmap) return;
   const { vision, animCells, cells, screenDim, gridEl, cellSize } = board;
 
-  const hero = gmap.entities.find(e => e.alive && e.kind === HERO);
-  const heroRow = hero ? hero.row : 0;
-  const heroCol = hero ? hero.col : 0;
+  // Camera: centroid of all alive heroes (integer tile coords)
+  const heroes = gmap.entities.filter(e => e.alive && e.kind === HERO);
+  let heroRow = 0, heroCol = 0;
+  if (heroes.length) {
+    heroRow = Math.round(heroes.reduce((s, h) => s + h.row, 0) / heroes.length);
+    heroCol = Math.round(heroes.reduce((s, h) => s + h.col, 0) / heroes.length);
+  }
   board.heroRow = heroRow;
   board.heroCol = heroCol;
   board.gmap    = gmap;
 
-  // Build new visible set (world coords within the vision circle AND in-bounds)
+  // Visible set: union of every alive hero's vision circle.
+  // When a hero dies their tiles drop out here → animCells target→0 → fade.
   const newVisible = new Set();
-  for (let dr = -vision; dr <= vision; dr++) {
-    for (let dc = -vision; dc <= vision; dc++) {
-      if (!inCircle(dr, dc, vision)) continue;
-      const wr = heroRow + dr;
-      const wc = heroCol + dc;
-      if (wr >= 0 && wr < gmap.rows && wc >= 0 && wc < gmap.cols) {
-        newVisible.add(`${wr},${wc}`);
+  for (const hero of heroes) {
+    for (let dr = -vision; dr <= vision; dr++) {
+      for (let dc = -vision; dc <= vision; dc++) {
+        if (!inCircle(dr, dc, vision)) continue;
+        const wr = hero.row + dr;
+        const wc = hero.col + dc;
+        if (wr >= 0 && wr < gmap.rows && wc >= 0 && wc < gmap.cols) {
+          newVisible.add(`${wr},${wc}`);
+        }
       }
     }
   }
@@ -156,9 +163,8 @@ export function updateBoard(board, gmap) {
       const wr = heroRow + (i - vision);
       const wc = heroCol + (j - vision);
       const cell = cells[i][j];
-      const dr = i - vision, dc = j - vision;
       const inMap    = wr >= 0 && wr < gmap.rows && wc >= 0 && wc < gmap.cols;
-      const inVision = inMap && inCircle(dr, dc, vision);
+      const inVision = inMap && newVisible.has(`${wr},${wc}`);
 
       // World coords for tooltip lookups
       cell.div.dataset.worldR = wr;
