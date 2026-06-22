@@ -172,6 +172,18 @@ function updateTimelineDots() {
     dot.className = "timeline-dot";
     dot.dataset.pos = i;
 
+    const dotRound = Math.floor(i / ROUND_LENGTH) + 1;
+    const dotTick  = i % ROUND_LENGTH;
+    if (i === 0) {
+      dot.title = "Start";
+    } else if (i === endPos && finalStatus !== "playing") {
+      dot.title = finalStatus === "win" ? "You win!" : "You lose";
+    } else if (i % ROUND_LENGTH === 0) {
+      dot.title = `Round ${dotRound} begins`;
+    } else {
+      dot.title = `Round ${dotRound} · Tick ${dotTick}`;
+    }
+
     // Round markers (every ROUND_LENGTH ticks)
     if (i > 0 && i % ROUND_LENGTH === 0) {
       dot.classList.add("round-marker");
@@ -298,6 +310,11 @@ function renderHotbar() {
     for (let i = 0; i < ROUND_LENGTH; i++) {
       hotbarEl.appendChild(makeTile(displayed[i], i + 1, i < n, i, chargeInfo));
     }
+  } else {
+    const hint = document.createElement("span");
+    hint.className = "hotbar-empty";
+    hint.textContent = "Tap move or attack buttons to queue actions · Enter to play";
+    hotbarEl.appendChild(hint);
   }
   refreshLogJSON();
 }

@@ -16,7 +16,7 @@
     </div>
     <div class="topbar-center">
       <h1 class="map-title" id="map-title">—</h1>
-      <div class="map-meta" id="map-meta">R1 · T0</div>
+      <div class="map-meta" id="map-meta" title="Round · Tick — each round is 10 ticks. Queue moves, then press ▶ Play.">R1 · T0</div>
     </div>
     <div class="topbar-right">
       <button class="chat-toggle" id="chat-toggle">💬 Log</button>
@@ -74,25 +74,25 @@
         <span class="pad-title">Move</span>
         <div class="pad-stage">
           <div class="pad-grid">
-            <button class="ctl move-btn" data-token="w" style="grid-area:up"><span>W</span></button>
-            <button class="ctl move-btn" data-token="a" style="grid-area:left"><span>A</span></button>
-            <button class="ctl wait-btn" data-token="." style="grid-area:center"><span>.</span></button>
-            <button class="ctl move-btn" data-token="d" style="grid-area:right"><span>D</span></button>
-            <button class="ctl move-btn" data-token="s" style="grid-area:down"><span>S</span></button>
+            <button class="ctl move-btn" data-token="w" data-dir="↑" style="grid-area:up"     title="Move up (W)"><span>W</span></button>
+            <button class="ctl move-btn" data-token="a" data-dir="←" style="grid-area:left"   title="Move left (A)"><span>A</span></button>
+            <button class="ctl wait-btn" data-token="."              style="grid-area:center"  title="Wait — skip this tick (.)"><span>·</span></button>
+            <button class="ctl move-btn" data-token="d" data-dir="→" style="grid-area:right"  title="Move right (D)"><span>D</span></button>
+            <button class="ctl move-btn" data-token="s" data-dir="↓" style="grid-area:down"   title="Move down (S)"><span>S</span></button>
           </div>
         </div>
       </div>
 
-      <!-- Center column of diamond buttons -->
+      <!-- Center column: Play / R / Clear -->
       <div class="center-column">
-        <button id="play" class="diamond-btn play-diamond" aria-label="play">
+        <button id="play" class="diamond-btn play-diamond" title="Play round (Enter)">
           <span>▶</span>
         </button>
-        <button class="diamond-btn r-diamond" data-token="r" id="btn-r" aria-label="special R">
+        <button class="diamond-btn r-diamond" data-token="r" id="btn-r" title="Charge ability (R) — arms here, fires on your next move">
           <span>R</span>
         </button>
-        <button id="clear" class="diamond-btn clear-diamond" aria-label="clear">
-          <span>🗑</span>
+        <button id="clear" class="diamond-btn clear-diamond" title="Clear all queued moves (Backspace)">
+          <span>✕</span>
         </button>
       </div>
 
@@ -100,11 +100,11 @@
         <span class="pad-title">Attack</span>
         <div class="pad-stage">
           <div class="pad-grid">
-            <button class="ctl atk-btn" data-token="t" style="grid-area:up"><span>T</span></button>
-            <button class="ctl atk-btn" data-token="f" style="grid-area:left"><span>F</span></button>
-            <button class="ctl ability-center" data-token="e" style="grid-area:center"><span>E</span></button>
-            <button class="ctl atk-btn" data-token="h" style="grid-area:right"><span>H</span></button>
-            <button class="ctl atk-btn" data-token="g" style="grid-area:down"><span>G</span></button>
+            <button class="ctl atk-btn"      data-token="t" data-dir="↑" style="grid-area:up"     title="Attack up (T)"><span>T</span></button>
+            <button class="ctl atk-btn"      data-token="f" data-dir="←" style="grid-area:left"   title="Attack left (F)"><span>F</span></button>
+            <button class="ctl ability-center" data-token="e"            style="grid-area:center"  title="Ability (E) — instant, hero-specific"><span>E</span></button>
+            <button class="ctl atk-btn"      data-token="h" data-dir="→" style="grid-area:right"  title="Attack right (H)"><span>H</span></button>
+            <button class="ctl atk-btn"      data-token="g" data-dir="↓" style="grid-area:down"   title="Attack down (G)"><span>G</span></button>
           </div>
         </div>
       </div>

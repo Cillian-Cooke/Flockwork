@@ -499,15 +499,37 @@ body {
   width: 52px; height: 52px;
   border-radius: 9px;
   padding: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   font-size: 13px;
   font-weight: 700;
 }
 
-.pad-grid .ctl > span {
+/* Direction arrow shown above the key letter for directional buttons */
+.pad-grid .ctl[data-dir]::before {
+  content: attr(data-dir);
+  font-size: 16px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* Key letter shown small below the arrow */
+.pad-grid .ctl[data-dir] > span {
+  font-size: 9px;
+  opacity: 0.62;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Non-directional buttons (wait, ability): keep original centred text */
+.pad-grid .ctl:not([data-dir]) > span {
   display: grid;
   place-items: center;
+  font-size: 16px;
+  line-height: 1;
 }
 
 /* Center column of buttons (Play / R / Clear) between the two pads */
@@ -622,6 +644,19 @@ body {
   gap: clamp(2px, 1.4vw, 6px);
   align-items: center;
   width: 100%;
+}
+
+/* Placeholder shown when no moves are queued yet */
+.hotbar-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  opacity: 0.8;
+  pointer-events: none;
+  user-select: none;
 }
 .tile {
   width: 100%;
