@@ -30,8 +30,8 @@ let filmstrips    = null;
 let youLosePlayed = false;
 let endShown      = false;
 
-const KEYMAP = { w:"w",a:"a",s:"s",d:"d",t:"t",f:"f",g:"g",h:"h",e:"e",r:"r",".":"." };
-const SYMBOL  = { w:"↑",s:"↓",a:"←",d:"→",t:"↑",f:"←",g:"↓",h:"→",e:"e",r:"r",".":"·" };
+const KEYMAP = { w:"w",a:"a",s:"s",d:"d",e:"e",r:"r",".":"." };
+const SYMBOL  = { w:"↑",s:"↓",a:"←",d:"→",e:"e",r:"r",".":"·" };
 
 // --- mobile lockdown: no pinch-zoom / double-tap-zoom, page stays fixed ----
 
@@ -241,9 +241,8 @@ function centerCurrentDot(smooth) {
 
 function tileKind(token) {
   const [k] = classify(token);
-  if (k === "move")   return "move";
-  if (k === "attack") return "attack";
-  if (k === "wait")   return "wait";
+  if (k === "move") return "move";
+  if (k === "wait") return "wait";
   return "ability";
 }
 
@@ -313,7 +312,7 @@ function renderHotbar() {
   } else {
     const hint = document.createElement("span");
     hint.className = "hotbar-empty";
-    hint.textContent = "Tap move or attack buttons to queue actions · Enter to play";
+    hint.textContent = "Tap move buttons to herd — push sheep into hazards · Enter to play";
     hotbarEl.appendChild(hint);
   }
   refreshLogJSON();
@@ -1236,7 +1235,6 @@ function clickAppend(token) {
 document.querySelectorAll(".ctl[data-token]").forEach(btn => {
   btn.addEventListener("click", () => clickAppend(btn.dataset.token));
 });
-document.getElementById("btn-r").addEventListener("click", () => clickAppend("r"));
 document.getElementById("clear").addEventListener("click", clearMoves);
 document.getElementById("play").addEventListener("click", playRound);
 

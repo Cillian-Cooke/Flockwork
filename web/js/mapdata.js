@@ -88,6 +88,7 @@ export function buildGameMap(data = LEVEL) {
   }
 
   const scripts = data.scripts || {};
+  const meta = data.meta || {};
   const terrain = [];
   const entities = [];
   const seenEnemy = new Set();
@@ -99,8 +100,11 @@ export function buildGameMap(data = LEVEL) {
       terrainRow.push(tid);
       if (letter === null) return;
       const kind = kindOf(letter);
+      const m = meta[letter] || {};
+      // Skittish sheep compute their own flee moves, so they need no script.
+      const selfDriven = kind === SHEEP && m.behavior === "skittish";
       let loop = [];
-      if (kind === ENEMY || kind === SHEEP) {
+      if ((kind === ENEMY || kind === SHEEP) && !selfDriven) {
         if (!(letter in scripts)) {
           throw new MapError(`entity ${letter} at [${r}][${c}] has no script`);
         }
@@ -115,6 +119,9 @@ export function buildGameMap(data = LEVEL) {
       entities.push(new Entity({
         letter, kind, row: r, col: c, loop,
         entityType: entityTypeOf(letter) || "",
+        behavior: kind === SHEEP ? (m.behavior || "flock") : "flock",
+        lethalToHero: m.lethalToHero !== undefined ? m.lethalToHero : true,
+        lethalToSheep: m.lethalToSheep !== undefined ? m.lethalToSheep : false,
       }));
     });
     terrain.push(terrainRow);

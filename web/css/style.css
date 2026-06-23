@@ -532,14 +532,14 @@ body {
   line-height: 1;
 }
 
-/* Center column of buttons (Play / R / Clear) between the two pads */
+/* Center column (Play / Clear) between the Move pad and the Ability stack */
 .center-column {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  /* shift down so R aligns with the center row of the pad grids */
+  /* shift down so the buttons sit beside the pad grids, not their titles */
   margin-top: 18px;
 }
 
@@ -571,14 +571,6 @@ body {
 }
 .play-diamond:hover { filter: brightness(1.08); box-shadow: 0 4px 14px rgba(76,126,240,0.38); }
 .play-diamond > span { margin-left: 2px; } /* optically nudge ▶ glyph */
-
-.r-diamond {
-  background: #eef8f0;
-  border-color: #b0d8b8;
-  color: #1e6a30;
-}
-.r-diamond:hover { background: #dcf0e0; }
-.r-diamond > span { font-size: 13px; } /* match the W / A / S / D pad letters */
 
 .clear-diamond {
   background: #fff0ee;
@@ -612,10 +604,27 @@ body {
 .ctl.move-btn:hover { background: #d0e8ff; }
 .ctl.wait-btn     { background: #f0f0e8; border-color: #d8d4c0; color: var(--muted); }
 .ctl.wait-btn:hover { background: #e8e8d8; }
-.ctl.atk-btn      { background: #fff0ee; border-color: #f0c0b8; color: #8a2020; }
-.ctl.atk-btn:hover { background: #ffe0de; }
-.ctl.ability-center { background: #f4eeff; border-color: #c8b0e8; color: #5a1e8a; }
-.ctl.ability-center:hover { background: #e8dcf8; }
+
+/* Ability stack (E / R) replacing the old attack pad */
+.ability-stack {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  min-height: 166px; /* match the 3-row Move pad so the titles line up */
+}
+.ctl.ability-btn {
+  width: 52px; height: 52px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 700;
+}
+.ctl.ability-btn[data-token="e"]       { background: #f4eeff; border-color: #c8b0e8; color: #5a1e8a; }
+.ctl.ability-btn[data-token="e"]:hover { background: #e8dcf8; }
+.ctl.ability-btn[data-token="r"]       { background: #eef8f0; border-color: #b0d8b8; color: #1e6a30; }
+.ctl.ability-btn[data-token="r"]:hover { background: #dcf0e0; }
 
 
 /* ---- hotbar --------------------------------------------------------------- */

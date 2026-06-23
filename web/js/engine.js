@@ -1,31 +1,35 @@
-// Per-tick simultaneous resolution — port of game/engine.py.
+// Per-tick resolution for the push / herding model.
 //
 // One round is 10 ticks. Each step() advances a single tick. Resolution order:
-//   1. Classify each entity's action into move / attack / wait / ability.
+//   1. Classify each entity's action into move / wait / ability. Skittish sheep
+//      compute a flee direction here instead of reading a script.
 //   2. Charges: an armed ability_2 (token 'r') reinterprets this entity's NEXT
-//      move-direction token as the charged ability firing in that direction —
-//      the charge persists through waits/attacks/ability_1 in between, and the
-//      ability itself never fires on the 'r' tick, only on the direction tick.
+//      move-direction token as the charged ability firing in that direction.
 //   3. Abilities resolve (ability_1 instantly; charged_2 using the captured
-//      direction). They can affect movement/attacks.
-//   4. Movement, simultaneous, lowest-index-wins on contested cells, head-on
-//      swaps blocked.
-//   5. On-enter terrain for entities that moved (chains).
-//   6. Brute bonus step: a Brute that took a plain move advances one further
-//      tile in the same direction (so every move covers 2 tiles).
-//   7. Attacks resolve against POST-move positions.
-//   8. Mark the dead.
+//      direction). Kept from the old model; the rework is Phase 2.
+//   4. Record intended destinations (for hero/enemy contact-death detection).
+//   5. Movement, resolved SEQUENTIALLY in priority order (rank desc, then grid
+//      index asc). Moving into an entity PUSHES it if you out-rank it
+//      (Hero > Sheep > Enemy); same-rank or upward pushes are blocked. Terrain
+//      on-enter chains inline as each entity lands.
+//   6. Brute bonus step: a Brute that took a plain move advances one more tile.
+//   7. Contact-death: a hero that clashes with a lethal enemy dies.
 //
-// Sheep flock: sheep share one script per letter, so scripted moves are
-// already in lockstep. Anything that displaces a sheep OUTSIDE that shared
-// script (terrain push/slip/glide/teleport/warp/mirror) is mirrored onto every
-// other living sheep too, so the whole flock always moves "as one".
+// Pushing: a hero shoves sheep, a sheep shoves enemies. Sheep die by being
+// pushed (or flock-mirrored) onto a hazard (lava/void), or into a sheep-lethal
+// enemy. Contention (two entities aiming at the same EMPTY tile) is decided by
+// the priority order alone — it is not pushing.
+//
+// Sheep flock: scripted "flock" sheep share one script per letter, so their
+// moves stay in lockstep. Anything that displaces a flock sheep OUTSIDE that
+// script (push/slip/glide/teleport/warp/mirror) is mirrored onto every other
+// living flock sheep, so the whole flock moves "as one" — including dying when
+// the mirrored step lands on a hazard. Skittish sheep are individuals.
 
 import * as terrain from "./terrain.js";
-import { classify, ROUND_LENGTH } from "./tokens.js";
-import { Entity, SHEEP } from "./entity.js";
+import { classify, ROUND_LENGTH, WAIT_TOKEN, MOVE_TOKENS } from "./tokens.js";
+import { Entity, SHEEP, HERO, ENEMY, rankOf } from "./entity.js";
 
-const key = (r, c) => `${r},${c}`;
 const ORTHOGONAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
 export class Engine {
@@ -43,17 +47,23 @@ export class Engine {
     const actions = new Map();
     const classified = new Map();
     for (const e of living) {
-      const tok = e.actionFor(this.tick, playerToken);
+      const tok = (e.kind === SHEEP && e.behavior === "skittish")
+        ? this._fleeToken(e)
+        : e.actionFor(this.tick, playerToken);
       actions.set(e, tok);
       classified.set(e, classify(tok));
     }
 
     this._resolveCharges(living, classified);
     this._resolveAbilities(living, classified);
+
+    // Intended destinations (post-ability) drive hero/enemy contact-death so a
+    // hero that wins a contested square against a lethal enemy still dies.
+    const intended = this._intendedTargets(living, classified);
+
     const moved = this._resolveMovement(living, classified);
-    this._applyArrivals(moved);
     this._resolveBruteExtraStep(moved);
-    this._resolveAttacks(living, classified);
+    this._contactDeaths(intended);
 
     for (const e of living) {
       e.blocked = false;
@@ -188,108 +198,192 @@ export class Engine {
     }
   }
 
-  // --- movement -----------------------------------------------------------
+  // --- movement (sequential push resolution) ------------------------------
 
+  // Process living entities in priority order (rank desc, then grid index asc).
+  // Each entity attempts its move; moving into an occupied tile pushes the
+  // occupant when out-ranked, otherwise blocks. Returns entity -> dir actually
+  // moved (for the brute bonus step). Terrain on-enter chains inline.
   _resolveMovement(living, classified) {
-    const terrainGrid = this.gmap.terrain;
-    const origin = new Map();
-    for (const e of living) origin.set(e, [e.row, e.col]);
-    const target = new Map();
     const moveDir = new Map();
-
     for (const e of living) {
+      if (!e.alive) continue;
       const [kind, [dr, dc]] = classified.get(e);
-      if (kind === "move") {
-        const nr = e.row + dr;
-        const nc = e.col + dc;
-        if (this._inBounds(nr, nc) && terrain.isPassable(terrainGrid[nr][nc])) {
-          target.set(e, [nr, nc]);
-          moveDir.set(e, [dr, dc]);
-          continue;
-        }
-      }
-      target.set(e, origin.get(e)); // attack / wait / blocked-by-wall stay put
+      if (kind === "move" && !(dr === 0 && dc === 0)) moveDir.set(e, [dr, dc]);
     }
 
-    const rejected = new Set();
-    let changed = true;
-    while (changed) {
-      changed = false;
-      const final = new Map();
-      for (const e of living) {
-        final.set(e, rejected.has(e) ? origin.get(e) : target.get(e));
-      }
-      const occ = new Map();
-      for (const e of living) {
-        const [r, c] = final.get(e);
-        const k = key(r, c);
-        if (!occ.has(k)) occ.set(k, []);
-        occ.get(k).push(e);
-      }
+    const order = living
+      .filter((e) => e.alive)
+      .sort((a, b) => {
+        const rk = rankOf(b.kind) - rankOf(a.kind);
+        return rk !== 0 ? rk : this._index.get(a) - this._index.get(b);
+      });
 
-      for (const e of living) {
-        if (rejected.has(e) || !moveDir.has(e)) continue;
-        const [tr, tc] = target.get(e);
-        const contenders = occ.get(key(tr, tc));
-        if (contenders.length > 1) {
-          const winner = this._cellWinner(contenders, moveDir, rejected);
-          if (e !== winner) {
-            rejected.add(e);
-            changed = true;
-            continue;
-          }
-        }
-        // head-on swap: someone sitting on my target is moving into my origin.
-        const [or, oc] = origin.get(e);
-        for (const other of living) {
-          if (other === e || rejected.has(other)) continue;
-          const [oor, ooc] = origin.get(other);
-          if (oor === tr && ooc === tc && moveDir.has(other)) {
-            const [otr, otc] = target.get(other);
-            if (otr === or && otc === oc) {
-              rejected.add(e);
-              changed = true;
-              break;
-            }
-          }
-        }
-      }
-    }
-
+    // Entities whose movement is final this tick — set so push and flock-mirror
+    // displacements also mark their victims, preventing an entity from being
+    // shoved AND running its own queued move in the same tick.
+    this._resolved = new Set();
     const moved = new Map();
-    for (const e of living) {
-      if (moveDir.has(e) && !rejected.has(e)) {
-        const [nr, nc] = target.get(e);
-        e.row = nr;
-        e.col = nc;
-        const dir = moveDir.get(e);
-        moved.set(e, dir);
-        e.lastMove = dir; // track for repeat-move terrain
-      }
+    for (const e of order) {
+      if (!e.alive || this._resolved.has(e)) continue;
+      this._attemptMove(e, moveDir, moved);
     }
+    this._resolved = null;
     return moved;
   }
 
-  // A settled occupant (not moving / already rejected) beats movers; otherwise
-  // the lowest grid index wins.
-  _cellWinner(contenders, moveDir, rejected) {
-    for (const e of contenders) {
-      if (!moveDir.has(e) || rejected.has(e)) return e;
+  _markResolved(e) {
+    if (this._resolved) this._resolved.add(e);
+  }
+
+  // Try to move e one tile in its direction. Pushes a lower-ranked occupant
+  // (Hero > Sheep > Enemy); a hero that walks into a lethal enemy dies instead
+  // of pushing. Records the move in `moved` if e advances.
+  _attemptMove(e, moveDir, moved) {
+    this._resolved.add(e); // mark in-progress: prevents reprocessing and recursion cycles
+    if (!e.alive) return false;
+    const dir = moveDir.get(e);
+    if (!dir) return false; // not a mover
+    const [dr, dc] = dir;
+    const nr = e.row + dr, nc = e.col + dc;
+    if (!this._inBounds(nr, nc) || !terrain.isPassable(this.gmap.terrain[nr][nc])) {
+      return false; // wall / out of bounds
     }
-    return contenders.reduce((a, b) =>
-      this._index.get(a) <= this._index.get(b) ? a : b);
+
+    let occ = this._occupant(nr, nc, e);
+    if (occ && !this._resolved.has(occ) && moveDir.has(occ)) {
+      // let the occupant try to vacate first, then re-check
+      this._attemptMove(occ, moveDir, moved);
+      occ = this._occupant(nr, nc, e);
+    }
+
+    if (occ) {
+      if (e.kind === HERO && occ.kind === ENEMY && occ.lethalToHero) {
+        e.alive = false; // contact death — hero does not advance
+        return false;
+      }
+      if (e.kind === SHEEP && occ.kind === ENEMY && occ.lethalToSheep) {
+        e.alive = false; // sheep walks into a sheep-killing enemy
+        return false;
+      }
+      if (rankOf(e.kind) > rankOf(occ.kind)) {
+        if (!this._attemptPush(occ, dir)) return false; // push failed → blocked
+        // occ vacated (moved or died); fall through
+      } else {
+        return false; // can't push equal/higher rank
+      }
+    }
+
+    e.row = nr; e.col = nc; e.lastMove = dir;
+    moved.set(e, dir);
+    this._arrive(e, dir);
+    return true;
+  }
+
+  // Shove b one tile in dir. Cascades down the hierarchy only (Hero→Sheep→Enemy,
+  // so chains are length <= 2). Returns true if b vacated its tile (moved or
+  // died). Flock sheep drag the rest of the flock; hazard landings kill.
+  _attemptPush(b, dir) {
+    const [dr, dc] = dir;
+    const nr = b.row + dr, nc = b.col + dc;
+    if (!this._inBounds(nr, nc) || !terrain.isPassable(this.gmap.terrain[nr][nc])) {
+      return false; // pushed into a wall / off the map
+    }
+    const occ = this._occupant(nr, nc, b);
+    if (occ) {
+      if (b.kind === SHEEP && occ.kind === ENEMY && occ.lethalToSheep) {
+        this._markResolved(b);
+        if (b.behavior === "flock") this._mirrorSheepDelta(b, dr, dc);
+        b.alive = false; // shoved into a sheep-killing enemy
+        return true;     // b vacated (died) → the pusher advances
+      }
+      if (rankOf(b.kind) > rankOf(occ.kind)) {
+        if (!this._attemptPush(occ, dir)) return false;
+      } else {
+        return false; // blocked by an equal/higher-ranked entity
+      }
+    }
+    const isFlock = b.kind === SHEEP && b.behavior === "flock";
+    b.row = nr; b.col = nc; b.lastMove = dir;
+    this._markResolved(b); // a pushed entity does not also run its own move
+    if (isFlock) this._mirrorSheepDelta(b, dr, dc); // flock chain-reaction
+    this._arrive(b, dir); // hazard kills; slip/glide/portal chain
+    return true;
+  }
+
+  // Deterministic flee for a skittish sheep: step to maximise distance from the
+  // nearest hero, refusing walls, occupied tiles and hazards. Ties broken by the
+  // fixed w/a/s/d order; if nothing increases distance, wait.
+  _fleeToken(sheep) {
+    let target = null, best = Infinity;
+    for (const h of this.gmap.entities) {
+      if (!h.alive || h.kind !== HERO) continue;
+      const d = Math.abs(h.row - sheep.row) + Math.abs(h.col - sheep.col);
+      if (d < best || (d === best && this._index.get(h) < this._index.get(target))) {
+        best = d; target = h;
+      }
+    }
+    if (!target) return WAIT_TOKEN;
+
+    let bestTok = WAIT_TOKEN, bestDist = best;
+    for (const tok of ["w", "a", "s", "d"]) {
+      const [dr, dc] = MOVE_TOKENS[tok];
+      const nr = sheep.row + dr, nc = sheep.col + dc;
+      if (!this._inBounds(nr, nc)) continue;
+      const tid = this.gmap.terrain[nr][nc];
+      if (!terrain.isPassable(tid)) continue;                 // wall
+      if (terrain.effectOf(tid) === terrain.DIE) continue;    // self-preservation
+      if (this._occupant(nr, nc, sheep)) continue;            // blocked
+      const d = Math.abs(target.row - nr) + Math.abs(target.col - nc);
+      if (d > bestDist) { bestDist = d; bestTok = tok; }
+    }
+    return bestTok;
+  }
+
+  // Intended destination per living entity (origin + move dir if that tile is
+  // in-bounds and passable, else origin). Used for contact-death detection.
+  _intendedTargets(living, classified) {
+    const intended = new Map();
+    for (const e of living) {
+      if (!e.alive) continue;
+      const [kind, [dr, dc]] = classified.get(e);
+      let tr = e.row, tc = e.col;
+      if (kind === "move" && !(dr === 0 && dc === 0)) {
+        const nr = e.row + dr, nc = e.col + dc;
+        if (this._inBounds(nr, nc) && terrain.isPassable(this.gmap.terrain[nr][nc])) {
+          tr = nr; tc = nc;
+        }
+      }
+      intended.set(e, [tr, tc]);
+    }
+    return intended;
+  }
+
+  // A victim dies if it shares an intended destination with a lethal enemy (so
+  // winning a contested square against one still kills you), or ends the tick
+  // co-located with one (a backstop for push-induced collisions). Heroes die to
+  // lethalToHero enemies; sheep die to lethalToSheep enemies.
+  _contactDeaths(intended) {
+    this._contactPass(intended, HERO, (en) => en.lethalToHero);
+    this._contactPass(intended, SHEEP, (en) => en.lethalToSheep);
+  }
+
+  _contactPass(intended, victimKind, isLethal) {
+    for (const v of this.gmap.entities) {
+      if (!v.alive || v.kind !== victimKind) continue;
+      const [vr, vc] = intended.get(v) || [v.row, v.col];
+      for (const en of this.gmap.entities) {
+        if (!en.alive || en.kind !== ENEMY || !isLethal(en)) continue;
+        const [er, ec] = intended.get(en) || [en.row, en.col];
+        if ((vr === er && vc === ec) || (v.row === en.row && v.col === en.col)) {
+          v.alive = false;
+          break;
+        }
+      }
+    }
   }
 
   // --- terrain on-enter ---------------------------------------------------
-
-  _applyArrivals(moved) {
-    const order = [...moved.keys()].sort(
-      (a, b) => this._index.get(a) - this._index.get(b));
-    for (const e of order) {
-      if (!e.alive) continue;
-      this._arrive(e, moved.get(e));
-    }
-  }
 
   _arrive(e, direction) {
     // Resolve the tile just stepped onto; effects can chain.
@@ -458,16 +552,19 @@ export class Engine {
   // however far away, gets pushed too.
 
   _mirrorSheepDelta(source, dr, dc) {
-    if (source.kind !== SHEEP || (dr === 0 && dc === 0)) return;
+    if (source.kind !== SHEEP || source.behavior !== "flock" || (dr === 0 && dc === 0)) return;
     for (const other of this.gmap.entities) {
-      if (other === source || !other.alive || other.kind !== SHEEP) continue;
+      if (other === source || !other.alive
+          || other.kind !== SHEEP || other.behavior !== "flock") continue;
       const nr = other.row + dr, nc = other.col + dc;
-      if (this._inBounds(nr, nc)
-          && terrain.isPassable(this.gmap.terrain[nr][nc])
-          && !this._occupant(nr, nc, other)) {
-        other.row = nr;
-        other.col = nc;
-      }
+      if (!this._inBounds(nr, nc) || !terrain.isPassable(this.gmap.terrain[nr][nc])) continue;
+      if (this._occupant(nr, nc, other)) continue;
+      other.row = nr;
+      other.col = nc;
+      other.lastMove = [dr, dc];
+      this._markResolved(other); // mirror-moved sheep don't also run their own move
+      // The flock dies together: a mirrored step onto a hazard is fatal.
+      if (terrain.effectOf(this.gmap.terrain[nr][nc]) === terrain.DIE) other.alive = false;
     }
   }
 
@@ -494,28 +591,6 @@ export class Engine {
         e.col = nc;
         e.lastMove = [dr, dc];
         this._arrive(e, [dr, dc]);
-      }
-    }
-  }
-
-  // --- attacks ------------------------------------------------------------
-
-  _resolveAttacks(living, classified) {
-    const marked = new Set();
-    for (const e of living) {
-      if (!e.alive) continue;
-      const [kind, [dr, dc]] = classified.get(e);
-      if (kind === "attack") {
-        const tr = e.row + dr; // attackers never moved this tick
-        const tc = e.col + dc;
-        if (this._inBounds(tr, tc)) marked.add(key(tr, tc));
-      }
-    }
-    if (!marked.size) return;
-    for (const e of this.gmap.entities) {
-      if (e.alive && marked.has(key(e.row, e.col))) {
-        if (e.blocked || e.barrier) continue; // BLOCK / BARRIER survive
-        e.alive = false;
       }
     }
   }

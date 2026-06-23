@@ -8,6 +8,13 @@ export const HERO = "hero";
 export const ENEMY = "enemy";
 export const SHEEP = "sheep";
 
+// Push hierarchy: an entity can only push entities STRICTLY below it.
+// Hero (3) > Sheep (2) > Enemy (1). Same-rank entities never push each other.
+const RANK = { [HERO]: 3, [SHEEP]: 2, [ENEMY]: 1 };
+export function rankOf(kind) {
+  return RANK[kind] || 0;
+}
+
 // Entity types with special abilities (uppercase = hero, lowercase = enemy).
 // ability_1 (token 'e') fires instantly, no direction needed. ability_2
 // (token 'r') arms a charge that fires on whichever direction key comes next
@@ -63,7 +70,8 @@ export function entityTypeOf(letter) {
 
 export class Entity {
   constructor({ letter, kind, row, col, loop = [], alive = true,
-                lastMove = [0, 0], entityType = "" }) {
+                lastMove = [0, 0], entityType = "",
+                behavior = "flock", lethalToHero = true, lethalToSheep = false }) {
     this.letter = letter;
     this.kind = kind;
     this.row = row;
@@ -77,6 +85,11 @@ export class Entity {
     this.blocked = false; // Knight BLOCK protection
     this.barrier = false; // Mage BARRIER / Ward protection
     this.chargingAbility2 = false; // armed by 'r', fires on the next move direction
+    // Sheep movement: "flock" (scripted, moves as one) | "skittish" (flees heroes).
+    this.behavior = behavior;
+    // Enemy contact lethality (most enemies kill the hero, not the sheep).
+    this.lethalToHero = lethalToHero;
+    this.lethalToSheep = lethalToSheep;
   }
 
   get pos() {
@@ -111,6 +124,9 @@ export class Entity {
       alive: this.alive,
       lastMove: this.lastMove.slice(),
       entityType: this.entityType,
+      behavior: this.behavior,
+      lethalToHero: this.lethalToHero,
+      lethalToSheep: this.lethalToSheep,
     });
     e.skipNext = this.skipNext;
     e.repeatNext = this.repeatNext;

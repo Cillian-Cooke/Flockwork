@@ -358,7 +358,8 @@ export function buildInitialLog(gmap) {
     entries.push({ cls: "sep", text: `  ${letter} (${kind}): ${loop.join(" ")}` });
   }
   entries.push({ cls: "sep", text: "" });
-  entries.push({ cls: "sep", text: "Move: w a s d  ·  Attack: t f g h  ·  Wait: ." });
+  entries.push({ cls: "sep", text: "Move: w a s d  ·  Wait: .   (walk into a sheep to push it)" });
+  entries.push({ cls: "sep", text: "Herd sheep into lava/void to kill them. Watch the flock move as one." });
   entries.push({ cls: "sep", text: "e: instant ability  ·  r: charge — fires on whichever move key comes next" });
   entries.push({ cls: "sep", text: "─────────────────────────────────────" });
   return entries;

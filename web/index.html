@@ -64,47 +64,40 @@
     <div id="hotbar" class="hotbar" aria-label="move hotbar"></div>
   </section>
 
-  <!-- Controls: isometric pads with Play / R / Clear column between them -->
+  <!-- Controls: Move pad | Play / Clear | Ability stack -->
   <section class="controls">
 
-    <!-- Move pad | center column (Play / R / Clear) | Attack pad -->
     <div class="pads-row">
 
       <div class="pad" aria-label="movement">
         <span class="pad-title">Move</span>
         <div class="pad-stage">
           <div class="pad-grid">
-            <button class="ctl move-btn" data-token="w" data-dir="↑" style="grid-area:up"     title="Move up (W)"><span>W</span></button>
-            <button class="ctl move-btn" data-token="a" data-dir="←" style="grid-area:left"   title="Move left (A)"><span>A</span></button>
+            <button class="ctl move-btn" data-token="w" data-dir="↑" style="grid-area:up"     title="Move up (W) — walk into a sheep to push it"><span>W</span></button>
+            <button class="ctl move-btn" data-token="a" data-dir="←" style="grid-area:left"   title="Move left (A) — walk into a sheep to push it"><span>A</span></button>
             <button class="ctl wait-btn" data-token="."              style="grid-area:center"  title="Wait — skip this tick (.)"><span>·</span></button>
-            <button class="ctl move-btn" data-token="d" data-dir="→" style="grid-area:right"  title="Move right (D)"><span>D</span></button>
-            <button class="ctl move-btn" data-token="s" data-dir="↓" style="grid-area:down"   title="Move down (S)"><span>S</span></button>
+            <button class="ctl move-btn" data-token="d" data-dir="→" style="grid-area:right"  title="Move right (D) — walk into a sheep to push it"><span>D</span></button>
+            <button class="ctl move-btn" data-token="s" data-dir="↓" style="grid-area:down"   title="Move down (S) — walk into a sheep to push it"><span>S</span></button>
           </div>
         </div>
       </div>
 
-      <!-- Center column: Play / R / Clear -->
+      <!-- Center column: Play / Clear -->
       <div class="center-column">
         <button id="play" class="diamond-btn play-diamond" title="Play round (Enter)">
           <span>▶</span>
-        </button>
-        <button class="diamond-btn r-diamond" data-token="r" id="btn-r" title="Charge ability (R) — arms here, fires on your next move">
-          <span>R</span>
         </button>
         <button id="clear" class="diamond-btn clear-diamond" title="Clear all queued moves (Backspace)">
           <span>✕</span>
         </button>
       </div>
 
-      <div class="pad" aria-label="attack">
-        <span class="pad-title">Attack</span>
+      <div class="pad" aria-label="abilities">
+        <span class="pad-title">Ability</span>
         <div class="pad-stage">
-          <div class="pad-grid">
-            <button class="ctl atk-btn"      data-token="t" data-dir="↑" style="grid-area:up"     title="Attack up (T)"><span>T</span></button>
-            <button class="ctl atk-btn"      data-token="f" data-dir="←" style="grid-area:left"   title="Attack left (F)"><span>F</span></button>
-            <button class="ctl ability-center" data-token="e"            style="grid-area:center"  title="Ability (E) — instant, hero-specific"><span>E</span></button>
-            <button class="ctl atk-btn"      data-token="h" data-dir="→" style="grid-area:right"  title="Attack right (H)"><span>H</span></button>
-            <button class="ctl atk-btn"      data-token="g" data-dir="↓" style="grid-area:down"   title="Attack down (G)"><span>G</span></button>
+          <div class="ability-stack">
+            <button class="ctl ability-btn" data-token="e" id="btn-e" title="Ability (E) — instant, hero-specific"><span>E</span></button>
+            <button class="ctl ability-btn" data-token="r" id="btn-r" title="Charge ability (R) — arms here, fires on your next move"><span>R</span></button>
           </div>
         </div>
       </div>
