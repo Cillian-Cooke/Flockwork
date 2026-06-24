@@ -725,6 +725,34 @@ body {
   opacity: 0.5;
 }
 
+/* The slot awaiting a direction — pulses to prompt W/A/S/D. */
+.tile.ability-aim {
+  background: #fff4d6;
+  color: #8a5a00;
+  border: 2px dashed var(--charge);
+  animation: aim-pulse 0.9s ease-in-out infinite;
+}
+@keyframes aim-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(232,162,60,0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(232,162,60,0.45); }
+}
+.tile-aim-hint {
+  position: absolute; bottom: 1px; left: 0; right: 0;
+  text-align: center;
+  font-size: clamp(5px, 1.6vw, 7px); font-weight: 800;
+  letter-spacing: 0.5px; text-transform: uppercase; opacity: 0.8;
+}
+
+/* Empty (unqueued) tick slots — faint placeholders showing the round length. */
+.tile.empty {
+  background: transparent;
+  border: 1.5px dashed var(--line);
+  box-shadow: none;
+  color: var(--muted);
+  opacity: 0.5;
+}
+.tile.empty .tile-tick { opacity: 0.7; }
+
 /* The action-cost badge. Bigger and red for the expensive (3+) abilities so it's
    unmistakable that they swallow several actions. */
 .tile-cost-badge {

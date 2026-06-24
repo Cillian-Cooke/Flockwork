@@ -29,11 +29,23 @@ export function abilitySlotOf(token) {
 
 export const WAIT_TOKEN = ".";
 
+// Hotbar placeholders reserved by a multi-action ability. AIM marks the slot
+// awaiting a direction; LOCK marks the extra action-slots a costly ability eats.
+// Both behave as waits for the engine; they exist so the cost is visible.
+export const AIM_TOKEN = "?";
+export const LOCK_TOKEN = "_";
+
 export const ALL_TOKENS = new Set([
   ...Object.keys(MOVE_TOKENS),
   ...Object.keys(ABILITY_TOKENS),
   WAIT_TOKEN,
+  AIM_TOKEN,
+  LOCK_TOKEN,
 ]);
+
+export function isMoveToken(token) {
+  return token in MOVE_TOKENS;
+}
 
 export const ROUND_LENGTH = 10;
 
@@ -48,7 +60,7 @@ for (const [tok, [dr, dc]] of Object.entries(MOVE_TOKENS)) {
 export function classify(token) {
   if (token in MOVE_TOKENS) return ["move", MOVE_TOKENS[token]];
   if (token in ABILITY_TOKENS) return ["ability", [0, 0]];
-  if (token === WAIT_TOKEN) return ["wait", [0, 0]];
+  if (token === WAIT_TOKEN || token === AIM_TOKEN || token === LOCK_TOKEN) return ["wait", [0, 0]];
   throw new Error(`unknown action token: ${JSON.stringify(token)}`);
 }
 

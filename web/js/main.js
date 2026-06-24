@@ -3,7 +3,7 @@
 import { simulateTo, parseMoves, setActiveLevel, getActiveLevel } from "./game.js";
 import { buildGameMap, MapError } from "./mapdata.js";
 import { initBoard, updateBoard, startRafLoop, buildInitialLog, buildTickEntries } from "./render.js";
-import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf } from "./tokens.js";
+import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf, isMoveToken, AIM_TOKEN, LOCK_TOKEN } from "./tokens.js";
 import { describeTerrain } from "./terrain.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
 import { ABILITIES, lockAfter } from "./abilities.js";
@@ -266,36 +266,36 @@ function tokenGlyph(token) {
 // direction), 'fire' (the move that triggers it) and 'lock' (extra action-slots
 // a costly ability eats as forced waits). Lets the hotbar show how many actions
 // an ability really spends.
+// Tag each queued tile's role so the hotbar can show an ability as one block:
+// 'cast' (with a ×cost badge), 'fire' (the direction that triggers it), 'aim'
+// (still needs a direction) and 'lock' (a reserved action the cost eats).
 function annotateAbilities(tokens) {
-  const role = new Map();  // index -> role string
-  const cost = new Map();  // cast index -> total action cost
-  let armed = null, castIdx = -1, lock = 0;
+  const role = new Map();
+  const cost = new Map();
+  let armed = false;
   tokens.forEach((tok, i) => {
-    if (lock > 0) { role.set(i, "lock"); lock -= 1; return; } // consumed by a costly ability
     const slot = abilitySlotOf(tok);
     const ab = slot >= 0 ? ABILITIES[currentAbilities[slot]] : null;
-    if (ab) {
-      role.set(i, "cast");
-      cost.set(i, ab.cost);
-      if (ab.directional) { armed = ab; castIdx = i; }
-      else { lock = lockAfter(ab); armed = null; }          // instant: lock starts now
-    } else if (armed && classify(tok)[0] === "move") {
-      role.set(i, "fire");
-      cost.set(castIdx, armed.cost);
-      lock = lockAfter(armed); armed = null;                // directional: lock starts after firing
-    } else if (armed) {
-      role.set(i, "active");
-    }
+    if (ab) { role.set(i, "cast"); cost.set(i, ab.cost); armed = ab.directional; }
+    else if (tok === AIM_TOKEN) { role.set(i, "aim"); }       // armed stays — still needs a direction
+    else if (tok === LOCK_TOKEN) { role.set(i, "lock"); }
+    else if (armed && isMoveToken(tok)) { role.set(i, "fire"); armed = false; }
+    else { armed = false; }
   });
   return { role, cost };
 }
 
+// A non-draggable tile role (ability blocks shouldn't be reordered piecemeal).
+function isBlockRole(role) {
+  return role === "cast" || role === "fire" || role === "aim" || role === "lock";
+}
+
 function makeTile(token, tickNo, solid, index, info) {
   const tile = document.createElement("div");
+  const role = info.role.get(index);
   const classes = ["tile", tileKind(token), solid ? "solid" : "ghost"];
   const slot = abilitySlotOf(token);
   const ab = slot >= 0 ? ABILITIES[currentAbilities[slot]] : null;
-  const role = info.role.get(index);
   let title = `tick ${tickNo}: ${ab ? ab.name : tokenLabel(token)}`;
   let badge = "";
   let glyph = tokenGlyph(token);
@@ -306,22 +306,33 @@ function makeTile(token, tickNo, solid, index, info) {
     badge = `<span class="tile-cost-badge">×${c}</span>`;
     if (c >= 3) classes.push("ability-costly");
     title += ` — costs ${c} action${c > 1 ? "s" : ""}`;
-  } else if (role === "active") {
-    classes.push("ability-active");
-    title += " — armed, waiting for a direction";
+  } else if (role === "aim") {
+    classes.push("ability-aim");
+    glyph = "✛";
+    badge = `<span class="tile-aim-hint">aim</span>`;
+    title = `tick ${tickNo}: pick a direction (W/A/S/D) to aim the ability`;
   } else if (role === "fire") {
     classes.push("ability-fire");
-    title += " — ability fires here";
+    title += " — the ability fires this way";
   } else if (role === "lock") {
     classes.push("ability-lock");
     glyph = "🔒";
-    title += " — locked: the ability is still resolving (this action is spent)";
+    title = `tick ${tickNo}: locked — spent powering the ability`;
   }
 
   tile.className = classes.join(" ");
   tile.title = title;
   tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${glyph}${badge}`;
-  if (solid) { tile.dataset.index = index; }
+  // Only plain moves are draggable; ability blocks move as a unit (or not).
+  if (solid && !isBlockRole(role)) tile.dataset.index = index;
+  return tile;
+}
+
+function makeEmptyTile(tickNo) {
+  const tile = document.createElement("div");
+  tile.className = "tile empty";
+  tile.title = `tick ${tickNo}: empty (waits)`;
+  tile.innerHTML = `<span class="tile-tick">${tickNo}</span>`;
   return tile;
 }
 
@@ -329,10 +340,10 @@ function renderHotbar() {
   hotbarEl.innerHTML = "";
   const n = currentMoves.length;
   if (n) {
-    const displayed = Array.from({ length: ROUND_LENGTH }, (_, i) => currentMoves[i % n]);
-    const info = annotateAbilities(displayed);
+    const info = annotateAbilities(currentMoves);
     for (let i = 0; i < ROUND_LENGTH; i++) {
-      hotbarEl.appendChild(makeTile(displayed[i], i + 1, i < n, i, info));
+      hotbarEl.appendChild(i < n ? makeTile(currentMoves[i], i + 1, true, i, info)
+                                 : makeEmptyTile(i + 1));
     }
   } else {
     const hint = document.createElement("span");
@@ -355,14 +366,50 @@ function resetCurrentRound() {
 
 function appendToken(token) {
   if (playing || playingThrough || !lastSnapshot) return;
-  currentMoves.push(token);
+  const slot = abilitySlotOf(token);
+
+  if (slot >= 0) {
+    // Pressing an ability reserves its whole footprint up-front: the cast, a
+    // slot awaiting a direction (if directional), and lock slots for its cost.
+    const ab = ABILITIES[currentAbilities[slot]];
+    if (!ab) return; // empty slot button
+    const footprint = 1 + (ab.directional ? 1 : 0) + lockAfter(ab);
+    if (currentMoves.length + footprint > ROUND_LENGTH) return; // not enough room this round
+    currentMoves.push(token);
+    if (ab.directional) currentMoves.push(AIM_TOKEN);
+    for (let k = 0; k < lockAfter(ab); k++) currentMoves.push(LOCK_TOKEN);
+  } else if (isMoveToken(token)) {
+    // A direction fills the earliest ability that's awaiting one; otherwise it's
+    // a normal move appended at the end.
+    const aimIdx = currentMoves.indexOf(AIM_TOKEN);
+    if (aimIdx >= 0) currentMoves[aimIdx] = token;
+    else if (currentMoves.length < ROUND_LENGTH) currentMoves.push(token);
+    else return;
+  } else {
+    // wait (or anything non-directional) just appends after whatever's queued
+    if (currentMoves.length >= ROUND_LENGTH) return;
+    currentMoves.push(token);
+  }
+
   renderHotbar();
   resetCurrentRound();
 }
 
+// Backspace removes a whole ability block (cast + its direction/aim + locks) at
+// once, or a single plain token otherwise.
 function popToken() {
   if (playing || playingThrough || !currentMoves.length) return;
-  currentMoves.pop();
+  let i = currentMoves.length - 1;
+  const tail = currentMoves[i];
+  if (tail === LOCK_TOKEN || tail === AIM_TOKEN) {
+    while (i >= 0 && currentMoves[i] === LOCK_TOKEN) i--;        // trailing locks
+    if (i >= 0 && currentMoves[i] === AIM_TOKEN) i--;            // unfilled direction
+    else if (i >= 0 && isMoveToken(currentMoves[i])) i--;        // the firing direction
+    if (i >= 0 && abilitySlotOf(currentMoves[i]) >= 0) i--;      // the cast
+    currentMoves.length = i + 1;
+  } else {
+    currentMoves.pop();
+  }
   renderHotbar();
   resetCurrentRound();
 }
@@ -380,6 +427,10 @@ const delay = ms => new Promise(r => setTimeout(r, ms));
 
 async function playRound() {
   if (playing || playingThrough) return;
+  if (currentMoves.includes(AIM_TOKEN)) {
+    appendChatLine("! finish your ability — pick a direction (W/A/S/D) to aim it", "error");
+    return;
+  }
   try { parseMoves(currentMoves.join("")); }
   catch (err) { appendChatLine(`! ${err.message}`, "error"); return; }
 
@@ -958,6 +1009,7 @@ function onPointerCancel() {
 hotbarEl.addEventListener("pointerdown", e => {
   const tile = e.target.closest(".tile.solid");
   if (!tile || dragSource !== null) return;
+  if (tile.dataset.index === undefined) return; // ability-block tiles aren't draggable
   dragSource    = "reorder";
   dragIndex     = Number(tile.dataset.index);
   dragPointerId = e.pointerId;

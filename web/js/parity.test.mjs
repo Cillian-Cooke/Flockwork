@@ -156,14 +156,16 @@ const HA = (row, col, abilities) =>
     eng.gmap.entities.length === 2 && dup && pos(dup) === "1,2" && pos(h) === "1,1");
 })();
 
-// Duplicate costs 3 actions → hero is locked the tick after firing
+// A directional ability fires only on the immediately following move; if the
+// next tick isn't a move it fizzles (no carrying the arm across waits).
 (() => {
   const h = HA(1, 1, ["duplicate"]);
   const eng = new Engine(mk(grass(3, 5), [h]));
-  eng.step("1"); eng.step("d"); // fire (press + direction = 2 actions)
-  eng.step("w"); const locked = pos(h); // 3rd action spent as a forced wait
-  eng.step("w"); const freed = pos(h);
-  check("ability_cost_locks_hero", locked === "1,1" && freed === "0,1");
+  eng.step("1"); eng.step("."); // armed, then a wait → fizzles, no copy
+  const fizzled = eng.gmap.entities.length === 1;
+  eng.step("1"); eng.step("d"); // armed, then a move → fires
+  check("ability_fires_only_on_next_move",
+    fizzled && eng.gmap.entities.length === 2);
 })();
 
 // Hook (slot 1): drag the first entity in line one tile toward the hero

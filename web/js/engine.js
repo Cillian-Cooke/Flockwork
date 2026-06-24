@@ -29,7 +29,7 @@
 import * as terrain from "./terrain.js";
 import { classify, ROUND_LENGTH, WAIT_TOKEN, abilitySlotOf } from "./tokens.js";
 import { Entity, SHEEP, HERO, ENEMY, rankOf } from "./entity.js";
-import { ABILITIES, lockAfter } from "./abilities.js";
+import { ABILITIES } from "./abilities.js";
 
 const ORTHOGONAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
@@ -49,9 +49,7 @@ export class Engine {
     const actions = new Map();
     const classified = new Map();
     for (const e of living) {
-      let tok;
-      if (e.kind === HERO && e.lockedTicks > 0) { e.lockedTicks -= 1; tok = WAIT_TOKEN; }
-      else tok = e.actionFor(this.tick, playerToken);
+      const tok = e.actionFor(this.tick, playerToken);
       actions.set(e, tok);
       classified.set(e, classify(tok));
     }
@@ -140,32 +138,36 @@ export class Engine {
 
   // --- abilities (modular, 3-slot loadout) --------------------------------
 
-  // A hero's slot token arms a directional ability (fires on the next move) or
-  // runs an instant one now. The action cost beyond the press + direction is
-  // paid as forced waits (lockedTicks).
+  // A slot token arms a directional ability (which must be followed immediately
+  // by a move, supplying the direction) or runs an instant one now. The cost
+  // beyond the press + direction is paid by the LOCK slots the hotbar reserves
+  // in the queue (plain waits), so the engine itself doesn't force anything.
   _resolveAbilities(living, actions, classified) {
     for (const e of living) {
       if (!e.alive) continue;
       const tok = actions.get(e);
       const [kind] = classified.get(e);
+
+      // Resolve a directional ability armed on the previous tick: it fires only
+      // if this tick is a move; otherwise it fizzles (no carrying across waits).
+      if (e.armedAbility) {
+        const armed = ABILITIES[e.armedAbility];
+        e.armedAbility = null;
+        if (kind === "move") {
+          const [, dir] = classified.get(e);
+          armed.run(this, e, dir);
+          classified.set(e, ["wait", [0, 0]]); // the move is consumed by the ability
+          continue;
+        }
+      }
+
       if (kind === "ability") {
         const slot = abilitySlotOf(tok);
         const id = e.abilities && e.abilities[slot];
         const ab = id && ABILITIES[id];
         if (!ab) continue;
-        if (ab.directional) {
-          e.armedAbility = id; // wait for the next move to supply a direction
-        } else {
-          ab.run(this, e, [0, 0]);
-          e.lockedTicks = lockAfter(ab);
-        }
-      } else if (kind === "move" && e.armedAbility) {
-        const ab = ABILITIES[e.armedAbility];
-        e.armedAbility = null;
-        const [, dir] = classified.get(e);
-        ab.run(this, e, dir);
-        e.lockedTicks = lockAfter(ab);
-        classified.set(e, ["wait", [0, 0]]); // the move is consumed by the ability
+        if (ab.directional) e.armedAbility = id;
+        else ab.run(this, e, [0, 0]);
       }
     }
   }

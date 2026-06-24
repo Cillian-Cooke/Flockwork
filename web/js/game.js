@@ -6,7 +6,7 @@
 
 import { buildGameMap, LEVEL } from "./mapdata.js";
 import { Engine } from "./engine.js";
-import { ROUND_LENGTH, ALL_TOKENS } from "./tokens.js";
+import { ROUND_LENGTH, ALL_TOKENS, WAIT_TOKEN } from "./tokens.js";
 import { ENEMY, SHEEP } from "./entity.js";
 
 export class InputError extends Error {}
@@ -50,7 +50,9 @@ function statusOf(gmap) {
 function runRound(engine, gmap, moves, ticks, log) {
   engine.tick = 0;
   for (let t = 0; t < ticks; t++) {
-    const token = moves[t % moves.length];
+    // Play the queued sequence once, in order; any ticks past it are waits
+    // (the round no longer loops short sequences).
+    const token = t < moves.length ? moves[t] : WAIT_TOKEN;
     const before = new Map(gmap.entities.map((e) => [e, { row: e.row, col: e.col, alive: e.alive }]));
     engine.step(token);
 
