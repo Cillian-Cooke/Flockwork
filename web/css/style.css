@@ -1332,6 +1332,15 @@ body { padding-bottom: 22px; }
   margin-bottom: 2px;
 }
 
+.end-score {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--ink);
+  margin: 4px 0 2px;
+  letter-spacing: 0.3px;
+}
+.end-score[hidden] { display: none; }
+
 .end-stats {
   font-size: 15px;
   font-weight: 700;

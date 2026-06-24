@@ -8,6 +8,7 @@ import { describeTerrain, effectOf, DIE } from "./terrain.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
 import { ABILITIES, lockAfter } from "./abilities.js";
 import { initRiv, buildFilmstrips, playYouLose } from "./riv.js";
+import { buildShareText, computeScore } from "./share.js";
 
 // The loaded hero's ability loadout (3 slots) — drives the ability buttons and
 // the glyphs shown on queued ability tiles.
@@ -79,6 +80,13 @@ const endTitle    = document.getElementById("end-title");
 const endMapName  = document.getElementById("end-map-name");
 const endStats    = document.getElementById("end-stats");
 const endNext     = document.getElementById("end-next");
+const endScore    = document.getElementById("end-score");
+const endShare    = document.getElementById("end-share");
+let lastShareText = "";
+
+// Public play link included in every shared result. Change this if the
+// production domain differs (the Vercel project dashboard URL is NOT playable).
+const GAME_URL = "https://flockwork.vercel.app";
 
 // --- helpers --------------------------------------------------------------
 
@@ -1603,11 +1611,28 @@ function showEndOverlay(status) {
   endTitle.textContent  = isWin ? "YOU WIN!" : "YOU LOSE";
   endMapName.textContent = shortTitle(level.name, 30);
 
-  const roundStr  = rounds === 1 ? "1 round" : `${rounds} rounds`;
-  const extraStr  = extra  > 0 ? ` + ${extra} tick${extra !== 1 ? "s" : ""}` : "";
-  endStats.textContent = isWin
-    ? `${roundStr}${extraStr} · ${ticks} total ticks`
-    : `Eliminated in ${roundStr}${extraStr}`;
+  // Win: show a score + prep the Wordle-style share. Lose: just the verdict.
+  if (isWin) {
+    const moves = ticks;
+    const score = computeScore(lastSnapshot.gmap, moves);
+    const par = level.par;
+    const day = (dailyPack && dailyDayIndex !== null) ? dailyDayIndex + 1 : null;
+    endScore.textContent = `⭐ ${score}  ·  ${moves} move${moves !== 1 ? "s" : ""}${par ? `  ·  best ${par}` : ""}`;
+    endScore.hidden = false;
+    endStats.textContent = par && moves <= par ? "Optimal solve! 🏆" : "Solved!";
+    lastShareText = buildShareText({
+      day, moves, score, par,
+      initialGmap: buildGameMap(getActiveLevel()),
+      url: GAME_URL,
+    });
+    endShare.hidden = false;
+  } else {
+    const roundStr = rounds === 1 ? "1 round" : `${rounds} rounds`;
+    const extraStr = extra > 0 ? ` + ${extra} tick${extra !== 1 ? "s" : ""}` : "";
+    endStats.textContent = `Eliminated in ${roundStr}${extraStr}`;
+    endScore.hidden = true;
+    endShare.hidden = true;
+  }
 
   // "Next Day" button — only on win in daily mode with an available next map
   const nextIdx = dailyDayIndex !== null ? dailyDayIndex + 1 : -1;
@@ -1620,6 +1645,23 @@ function showEndOverlay(status) {
 
   endOverlay.hidden = false;
 }
+
+// Share via the native sheet on mobile, else copy to the clipboard.
+async function shareResult() {
+  if (!lastShareText) return;
+  if (navigator.share) {
+    try { await navigator.share({ text: lastShareText }); return; } catch { /* cancelled */ }
+  }
+  try {
+    await navigator.clipboard.writeText(lastShareText);
+    const old = endShare.textContent;
+    endShare.textContent = "✓ Copied!";
+    setTimeout(() => { endShare.textContent = old; }, 1500);
+  } catch {
+    appendChatLine("Couldn't copy — here's your result:\n" + lastShareText, "header");
+  }
+}
+endShare.addEventListener("click", shareResult);
 
 function hideEndOverlay() {
   endOverlay.hidden = true;
