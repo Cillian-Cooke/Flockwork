@@ -1,4 +1,4 @@
-// Entity model and kind/type helpers — port of game/entities.py.
+// Entity model and kind/rank helpers.
 
 import { WAIT_TOKEN, MOVE_REVERSE } from "./tokens.js";
 
@@ -15,48 +15,6 @@ export function rankOf(kind) {
   return RANK[kind] || 0;
 }
 
-// Entity types with special abilities (uppercase = hero, lowercase = enemy).
-// ability_1 (token 'e') fires instantly, no direction needed. ability_2
-// (token 'r') arms a charge that fires on whichever direction key comes next
-// — see Engine._resolveCharges.
-export const ENTITY_TYPES = {
-  K: { type: "knight", ability_1: "block",     ability_2: "lunge" },
-  k: { type: "knight", ability_1: "block",     ability_2: "lunge" },
-  R: { type: "rogue",  ability_1: "dash",      ability_2: "backstab" },
-  r: { type: "rogue",  ability_1: "dash",      ability_2: "backstab" },
-  M: { type: "mage",   ability_1: "barrier",   ability_2: "chain_bolt" },
-  m: { type: "mage",   ability_1: "barrier",   ability_2: "chain_bolt" },
-  B: { type: "brute",  ability_1: "slam",      ability_2: "charge" },
-  b: { type: "brute",  ability_1: "slam",      ability_2: "charge" },
-  H: { type: "hunter", ability_1: "quickshot", ability_2: "snipe" },
-  h: { type: "hunter", ability_1: "quickshot", ability_2: "snipe" },
-};
-
-// Tooltip copy for each type's abilities, plus any movement quirk.
-export const ABILITY_INFO = {
-  knight: {
-    e: "Block — invincible against attacks this tick.",
-    r: "Lunge — charge, then a direction: steps in and stabs the tile beyond.",
-  },
-  rogue: {
-    e: "Dash — automatically repeats your last move next tick.",
-    r: "Backstab — charge, then a direction: strikes 2 tiles away.",
-  },
-  mage: {
-    e: "Barrier — blocks all damage this tick.",
-    r: "Chain Bolt — charge, then a direction: beam hits everything in line until a wall.",
-  },
-  brute: {
-    e: "Slam — instantly hits all 4 adjacent tiles.",
-    r: "Charge — charge, then a direction: barrels forward until it hits a wall or an entity.",
-    move: "Moves 2 tiles per move action.",
-  },
-  hunter: {
-    e: "Quickshot — instant shot 2 tiles along your last move direction.",
-    r: "Snipe — charge, then a direction: long-range shot, hits the first thing in the way.",
-  },
-};
-
 export function kindOf(letter) {
   if (letter === SHEEP_LETTER) return SHEEP;
   if (letter >= "A" && letter <= "Z") return HERO;
@@ -64,14 +22,11 @@ export function kindOf(letter) {
   throw new Error(`not an entity letter: ${JSON.stringify(letter)}`);
 }
 
-export function entityTypeOf(letter) {
-  return (ENTITY_TYPES[letter] && ENTITY_TYPES[letter].type) || null;
-}
-
 export class Entity {
   constructor({ letter, kind, row, col, loop = [], alive = true,
-                lastMove = [0, 0], entityType = "",
-                behavior = "flock", lethalToHero = true, lethalToSheep = false }) {
+                lastMove = [0, 0],
+                behavior = "flock", lethalToHero = true, lethalToSheep = false,
+                heavy = false, abilities = [], toggle = null }) {
     this.letter = letter;
     this.kind = kind;
     this.row = row;
@@ -81,15 +36,21 @@ export class Entity {
     this.skipNext = false;
     this.repeatNext = false; // force repeat of last move
     this.lastMove = lastMove; // [dr, dc] of previous move
-    this.entityType = entityType; // "knight" | "rogue" | "mage" | "brute" | "hunter" | ""
-    this.blocked = false; // Knight BLOCK protection
-    this.barrier = false; // Mage BARRIER / Ward protection
-    this.chargingAbility2 = false; // armed by 'r', fires on the next move direction
-    // Sheep movement: "flock" (scripted, moves as one) | "skittish" (flees heroes).
+    // Sheep movement: "flock" sheep are scripted and move as one.
     this.behavior = behavior;
     // Enemy contact lethality (most enemies kill the hero, not the sheep).
     this.lethalToHero = lethalToHero;
     this.lethalToSheep = lethalToSheep;
+    // A heavy entity (e.g. a Boulder) cannot be pushed.
+    this.heavy = heavy;
+    // Hero loadout: up to three ability ids (see abilities.js).
+    this.abilities = abilities;
+    // Trap toggle schedule { period, phase } — lethal on active ticks.
+    this.toggle = toggle;
+    // Ability runtime state.
+    this.armedAbility = null; // id of a directional ability waiting for a move
+    this.lockedTicks = 0;     // forced waits remaining (an ability's action cost)
+    this.invuln = 0;          // ticks of invincibility remaining (Invincible)
   }
 
   get pos() {
@@ -123,16 +84,18 @@ export class Entity {
       loop: this.loop.slice(),
       alive: this.alive,
       lastMove: this.lastMove.slice(),
-      entityType: this.entityType,
       behavior: this.behavior,
       lethalToHero: this.lethalToHero,
       lethalToSheep: this.lethalToSheep,
+      heavy: this.heavy,
+      abilities: this.abilities.slice(),
+      toggle: this.toggle ? { ...this.toggle } : null,
     });
     e.skipNext = this.skipNext;
     e.repeatNext = this.repeatNext;
-    e.blocked = this.blocked;
-    e.barrier = this.barrier;
-    e.chargingAbility2 = this.chargingAbility2;
+    e.armedAbility = this.armedAbility;
+    e.lockedTicks = this.lockedTicks;
+    e.invuln = this.invuln;
     return e;
   }
 }

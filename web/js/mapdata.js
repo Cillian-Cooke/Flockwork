@@ -5,21 +5,24 @@
 //   "1"  -> terrain 1 (grass), empty
 //   "1a" -> enemy 'a' on grass     "1A" -> hero 'A'     "1s" -> sheep    "0" -> void
 
-import { Entity, kindOf, entityTypeOf, HERO, ENEMY, SHEEP } from "./entity.js";
+import { Entity, kindOf, HERO, ENEMY, SHEEP } from "./entity.js";
 import { ALL_TOKENS } from "./tokens.js";
 
-// Port of maps/level1.json — the single hardcoded level.
+// Default loadout for a hero whose map doesn't specify abilities.
+const DEFAULT_ABILITIES = ["hook", "charge", "duplicate"];
+
+// Fallback level used before any map is loaded.
 export const LEVEL = {
-  name: "Level 1 — First Blood",
+  name: "Level 1 — First Steps",
   vision: 5,
   grid: [
     ["1A", "1",  "1",  "1",  "1" ],
-    ["1",  "2",  "3",  "4",  "1" ],
+    ["1",  "2",  "3",  "1",  "1" ],
     ["1",  "1",  "1",  "1",  "1s"],
-    ["6",  "1a", "1",  "1",  "6" ],
+    ["1",  "1a", "1",  "1",  "3" ],
   ],
   scripts: {
-    s: ["w", "s", ".", ".", ".", ".", ".", ".", ".", "."],
+    s: [".", ".", ".", ".", ".", ".", ".", ".", ".", "."],
     a: ["d", "a", "d", "a", "d", "a", "d", "a", "d", "a"],
   },
 };
@@ -101,10 +104,10 @@ export function buildGameMap(data = LEVEL) {
       if (letter === null) return;
       const kind = kindOf(letter);
       const m = meta[letter] || {};
-      // Skittish sheep compute their own flee moves, so they need no script.
-      const selfDriven = kind === SHEEP && m.behavior === "skittish";
+      // Every NPC is fully scripted (no reactive AI) — sheep and enemies need a
+      // loop. A heavy Boulder may sit still; a stationary enemy can use ".".
       let loop = [];
-      if ((kind === ENEMY || kind === SHEEP) && !selfDriven) {
+      if (kind === ENEMY || kind === SHEEP) {
         if (!(letter in scripts)) {
           throw new MapError(`entity ${letter} at [${r}][${c}] has no script`);
         }
@@ -118,10 +121,11 @@ export function buildGameMap(data = LEVEL) {
       }
       entities.push(new Entity({
         letter, kind, row: r, col: c, loop,
-        entityType: entityTypeOf(letter) || "",
-        behavior: kind === SHEEP ? (m.behavior || "flock") : "flock",
         lethalToHero: m.lethalToHero !== undefined ? m.lethalToHero : true,
         lethalToSheep: m.lethalToSheep !== undefined ? m.lethalToSheep : false,
+        heavy: !!m.heavy,
+        toggle: m.toggle || null,
+        abilities: kind === HERO ? (m.abilities || DEFAULT_ABILITIES) : [],
       }));
     });
     terrain.push(terrainRow);

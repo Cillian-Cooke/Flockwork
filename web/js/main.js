@@ -3,10 +3,15 @@
 import { simulateTo, parseMoves, setActiveLevel, getActiveLevel } from "./game.js";
 import { buildGameMap, MapError } from "./mapdata.js";
 import { initBoard, updateBoard, startRafLoop, buildInitialLog, buildTickEntries } from "./render.js";
-import { classify, tokenLabel, ROUND_LENGTH } from "./tokens.js";
+import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf } from "./tokens.js";
 import { describeTerrain } from "./terrain.js";
-import { HERO, ENEMY, SHEEP, ABILITY_INFO } from "./entity.js";
+import { HERO, ENEMY, SHEEP } from "./entity.js";
+import { ABILITIES } from "./abilities.js";
 import { initRiv, buildFilmstrips, playYouLose } from "./riv.js";
+
+// The loaded hero's ability loadout (3 slots) — drives the ability buttons and
+// the glyphs shown on queued ability tiles.
+let currentAbilities = [];
 
 // --- state ----------------------------------------------------------------
 
@@ -30,8 +35,8 @@ let filmstrips    = null;
 let youLosePlayed = false;
 let endShown      = false;
 
-const KEYMAP = { w:"w",a:"a",s:"s",d:"d",e:"e",r:"r",".":"." };
-const SYMBOL  = { w:"↑",s:"↓",a:"←",d:"→",e:"e",r:"r",".":"·" };
+const KEYMAP = { w:"w",a:"a",s:"s",d:"d","1":"1","2":"2","3":"3",".":"." };
+const SYMBOL  = { w:"↑",s:"↓",a:"←",d:"→",".":"·" };
 
 // --- mobile lockdown: no pinch-zoom / double-tap-zoom, page stays fixed ----
 
@@ -246,24 +251,32 @@ function tileKind(token) {
   return "ability";
 }
 
-// Mirrors Engine._resolveCharges over the player's queued tokens, purely for
-// hotbar display: an armed 'r' (ability_2) stays active through whatever
-// comes next and only fires on the following move token — so a powerful
-// charged action visibly spans every tile from the 'r' to the move that
-// triggers it, and the badge shows exactly how many actions it costs.
+// The glyph shown on a queued tile: ability tokens render the loadout's icon.
+function tokenGlyph(token) {
+  const slot = abilitySlotOf(token);
+  if (slot >= 0) {
+    const ab = ABILITIES[currentAbilities[slot]];
+    return ab ? ab.glyph : String(slot + 1);
+  }
+  return SYMBOL[token] || token;
+}
+
+// Highlight a directional ability tile through to the move that fires it, so a
+// charged action visibly spans every tile from the press to its trigger.
 function annotateCharges(tokens) {
   const active = new Set();
   const starts = new Map(); // start index -> ticks until it fires
   const ends   = new Set();
   let chargeStart = null;
   tokens.forEach((tok, i) => {
-    const [kind] = classify(tok);
-    if (kind === "ability_2") {
+    const slot = abilitySlotOf(tok);
+    const ab = slot >= 0 ? ABILITIES[currentAbilities[slot]] : null;
+    if (ab && ab.directional) {
       chargeStart = i;
       active.add(i);
     } else if (chargeStart !== null) {
       active.add(i);
-      if (kind === "move") {
+      if (classify(tok)[0] === "move") {
         ends.add(i);
         starts.set(chargeStart, i - chargeStart);
         chargeStart = null;
@@ -276,26 +289,27 @@ function annotateCharges(tokens) {
 function makeTile(token, tickNo, solid, index, chargeInfo) {
   const tile = document.createElement("div");
   const classes = ["tile", tileKind(token), solid ? "solid" : "ghost"];
-  let title = `tick ${tickNo}: ${tokenLabel(token)}`;
+  const slot = abilitySlotOf(token);
+  const ab = slot >= 0 ? ABILITIES[currentAbilities[slot]] : null;
+  let title = `tick ${tickNo}: ${ab ? ab.name : tokenLabel(token)}`;
   let badge = "";
 
   if (chargeInfo.active.has(index)) classes.push("charge-active");
   if (chargeInfo.starts.has(index)) {
     classes.push("charge-start");
     const span = chargeInfo.starts.get(index);
-    badge = `<span class="tile-charge-badge">×${span + 1}</span>`;
-    title += ` — charges; fires ${span} tick${span === 1 ? "" : "s"} later (×${span + 1} actions total)`;
+    title += ` — fires ${span} tick${span === 1 ? "" : "s"} later`;
   } else if (chargeInfo.active.has(index) && !chargeInfo.ends.has(index)) {
-    title += " — ability still charging";
+    title += " — armed, waiting for a direction";
   }
   if (chargeInfo.ends.has(index)) {
     classes.push("charge-end");
-    title += " — charged ability fires here";
+    title += " — ability fires here";
   }
 
   tile.className = classes.join(" ");
   tile.title = title;
-  tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${SYMBOL[token] || token}${badge}`;
+  tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${tokenGlyph(token)}${badge}`;
   if (solid) { tile.dataset.index = index; }
   return tile;
 }
@@ -630,6 +644,23 @@ function showSaveOptions(data) {
   saveOptionsEl.hidden = false;
 }
 
+// Paint the three ability buttons from the loaded hero's loadout; hide empties.
+function updateAbilityButtons() {
+  for (let i = 0; i < 3; i++) {
+    const btn = document.getElementById(`ability-${i + 1}`);
+    if (!btn) continue;
+    const ab = ABILITIES[currentAbilities[i]];
+    const span = btn.querySelector("span");
+    if (ab) {
+      btn.hidden = false;
+      if (span) span.textContent = ab.glyph;
+      btn.title = `${ab.name} — ${ab.desc}`;
+    } else {
+      btn.hidden = true;
+    }
+  }
+}
+
 function loadLevelData(data, sourceName = "custom map", dailyCtx = null) {
   if (playing || playingThrough) return;
   dailyDayIndex = dailyCtx;
@@ -643,6 +674,11 @@ function loadLevelData(data, sourceName = "custom map", dailyCtx = null) {
 
   setActiveLevel(data);
   mapTitleEl.textContent = shortTitle(data.name);
+
+  // Read the hero's loadout so the ability buttons + tiles show the right icons.
+  const heroEnt = buildGameMap(data).entities.find(e => e.kind === HERO);
+  currentAbilities = heroEnt ? heroEnt.abilities.slice(0, 3) : [];
+  updateAbilityButtons();
 
   // Rebuild board if vision radius changed between levels
   const newVision = parseInt(data.vision || 5, 10);
@@ -816,7 +852,7 @@ function startSpawnGhost(token, clientX, clientY) {
   const { width, height } = sample ? sample.getBoundingClientRect() : { width: 38, height: 38 };
   ghostEl = document.createElement("div");
   ghostEl.className = `tile ${tileKind(token)} tile-ghost`;
-  ghostEl.textContent = SYMBOL[token] || token;
+  ghostEl.textContent = tokenGlyph(token);
   ghostEl.style.position = "fixed";
   ghostEl.style.left   = `${clientX - width / 2}px`;
   ghostEl.style.top    = `${clientY - height / 2}px`;
@@ -1059,17 +1095,20 @@ function entityAt(gmap, r, c) {
 }
 function describeEntity(e) {
   const kindName = e.kind === HERO ? "Hero" : e.kind === ENEMY ? "Enemy" : "Sheep";
-  const typeName = e.entityType ? ` ${e.entityType}` : "";
   const role = e.kind === HERO
-    ? "Player-controlled."
-    : e.kind === SHEEP ? "Clear all sheep to win. Pushed/slipped/teleported as one flock." : "Runs fixed loop; kills heroes.";
+    ? "Player-controlled. Walk into an entity to push it."
+    : e.kind === SHEEP ? "Herd into a hazard to clear it. Moves as one flock."
+    : e.heavy ? "A heavy block — can't be pushed."
+    : e.lethalToSheep && e.lethalToHero ? "Kills the hero AND sheep on contact."
+    : e.lethalToHero ? "Kills the hero on contact." : "Harmless on contact.";
   const pattern = e.kind === HERO ? "player" : (e.loop.length ? e.loop.join(" ") : "—");
-  const info = ABILITY_INFO[e.entityType];
-  const abilities = info
-    ? `<div class="tt-sub">e: ${info.e}</div><div class="tt-sub">r: ${info.r}</div>` +
-      (info.move ? `<div class="tt-sub">${info.move}</div>` : "")
+  const abilities = (e.kind === HERO && e.abilities && e.abilities.length)
+    ? e.abilities.filter(Boolean).map((id, i) => {
+        const ab = ABILITIES[id];
+        return ab ? `<div class="tt-sub">${i + 1}: ${ab.glyph} ${ab.name}</div>` : "";
+      }).join("")
     : "";
-  return `<div class="tt-title">${kindName}${typeName} '${e.letter}'</div>` +
+  return `<div class="tt-title">${kindName} '${e.letter}'</div>` +
     `<div>${role}</div><div class="tt-sub">loop: ${pattern}</div>${abilities}`;
 }
 
@@ -1309,22 +1348,28 @@ function buildCodexHTML(gmap) {
     html += '<div class="codex-section"><div class="codex-section-label">Entities on this map</div>';
     for (const e of entities) {
       const kindName = e.kind === HERO ? 'Hero' : e.kind === ENEMY ? 'Enemy' : 'Sheep';
-      const typeName = e.entityType
-        ? e.entityType.charAt(0).toUpperCase() + e.entityType.slice(1) : '';
-      const color     = CODEX_ENTITY_COLOR[e.entityType] ?? CODEX_KIND_COLOR[e.kind] ?? '#888';
+      const enemyKind = e.heavy ? 'Boulder'
+        : e.lethalToSheep && e.lethalToHero ? 'Wolf'
+        : e.lethalToHero ? 'Guard' : 'Enemy';
+      const typeName = e.kind === ENEMY ? enemyKind : '';
+      const color     = CODEX_KIND_COLOR[e.kind] ?? '#888';
       const textColor = e.kind === SHEEP ? '#3a3530' : '#fff';
       const role = e.kind === HERO
-        ? 'Player-controlled. Queue moves in the hotbar and press Play.'
+        ? 'Player-controlled. Walk into an entity to push it; queue moves and press Play.'
         : e.kind === SHEEP
-          ? 'Clear all sheep to win. They move as a flock and can be pushed.'
-          : 'Runs a fixed move loop. Kills your hero on contact.';
+          ? 'Herd into lava or void to clear it. Moves as a flock and can be pushed.'
+          : e.heavy ? 'A heavy block — it cannot be pushed.'
+          : e.lethalToSheep && e.lethalToHero ? 'Runs a fixed loop. Kills the hero AND eats sheep on contact.'
+          : e.lethalToHero ? 'Runs a fixed loop. Kills your hero on contact.'
+          : 'Runs a fixed loop. Harmless on contact.';
       const loop = e.kind !== HERO && e.loop.length
         ? `<div class="codex-sub">Loop: <b>${e.loop.join(' ')}</b></div>` : '';
-      const info = ABILITY_INFO[e.entityType];
-      const abilities = info
-        ? `<div class="codex-sub">e — ${info.e}</div>` +
-          `<div class="codex-sub">r — ${info.r}</div>` +
-          (info.move ? `<div class="codex-sub">${info.move}</div>` : '') : '';
+      const abilities = (e.kind === HERO && e.abilities && e.abilities.length)
+        ? e.abilities.filter(Boolean).map((id, i) => {
+            const ab = ABILITIES[id];
+            return ab ? `<div class="codex-sub"><b>${i + 1}</b> ${ab.glyph} ${ab.name} — ${ab.desc}</div>` : '';
+          }).join('')
+        : '';
       const kindTag = typeName ? `<span class="codex-tag">${kindName}</span>` : '';
       const displayName = typeName || kindName;
 

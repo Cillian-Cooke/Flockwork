@@ -6,9 +6,9 @@
 //
 //   w/a/s/d  -> move    up/left/down/right (moving into an entity PUSHES it)
 //   .        -> wait
-//   e        -> ability 1 (entity-specific, fires instantly, no direction)
-//   r        -> ability 2 (entity-specific, CHARGE: arms here, fires on
-//               whichever move-direction token comes next — see Engine)
+//   1/2/3    -> trigger ability slot 1/2/3 (the hero's loadout — see abilities.js).
+//               A directional ability arms here and fires in the direction of the
+//               NEXT move token; an instant ability fires immediately.
 //
 // Attacks (t/f/g/h) were removed: sheep are killed by being pushed into hazards,
 // not struck. See the push/herding rules in engine.js.
@@ -20,10 +20,12 @@ export const MOVE_TOKENS = {
   d: [0, 1],  // right (col + 1)
 };
 
-export const ABILITY_TOKENS = {
-  e: "ability_1",
-  r: "ability_2",
-};
+// Ability slot tokens map to the hero's loadout index (0-2).
+export const ABILITY_TOKENS = { "1": 0, "2": 1, "3": 2 };
+
+export function abilitySlotOf(token) {
+  return token in ABILITY_TOKENS ? ABILITY_TOKENS[token] : -1;
+}
 
 export const WAIT_TOKEN = ".";
 
@@ -41,22 +43,21 @@ for (const [tok, [dr, dc]] of Object.entries(MOVE_TOKENS)) {
   MOVE_REVERSE[`${dr},${dc}`] = tok;
 }
 
-// Returns [kind, [dr, dc]] where kind is
-// "move" | "ability_1" | "ability_2" | "wait".
+// Returns [kind, [dr, dc]] where kind is "move" | "ability" | "wait".
 // Wait and abilities carry a zero delta.
 export function classify(token) {
   if (token in MOVE_TOKENS) return ["move", MOVE_TOKENS[token]];
-  if (token === "e") return ["ability_1", [0, 0]];
-  if (token === "r") return ["ability_2", [0, 0]];
+  if (token in ABILITY_TOKENS) return ["ability", [0, 0]];
   if (token === WAIT_TOKEN) return ["wait", [0, 0]];
   throw new Error(`unknown action token: ${JSON.stringify(token)}`);
 }
 
-// A short human label for a token (used in tooltips / hotbar).
+// A short human label for a token (used in tooltips / hotbar). Ability slots are
+// labelled generically here; the UI substitutes the loadout's real names.
 export function tokenLabel(token) {
   const labels = {
     w: "↑ move up", a: "← move left", s: "↓ move down", d: "→ move right",
-    e: "ability 1 (instant)", r: "ability 2 (charge)", ".": "wait",
+    "1": "ability slot 1", "2": "ability slot 2", "3": "ability slot 3", ".": "wait",
   };
   return labels[token] || token;
 }

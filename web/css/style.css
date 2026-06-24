@@ -618,13 +618,15 @@ body {
   border-radius: 9px;
   display: grid;
   place-items: center;
-  font-size: 16px;
+  font-size: 22px; /* roomy for the emoji glyph */
   font-weight: 700;
+  background: #f4eeff;
+  border-color: #c8b0e8;
+  color: #5a1e8a;
 }
-.ctl.ability-btn[data-token="e"]       { background: #f4eeff; border-color: #c8b0e8; color: #5a1e8a; }
-.ctl.ability-btn[data-token="e"]:hover { background: #e8dcf8; }
-.ctl.ability-btn[data-token="r"]       { background: #eef8f0; border-color: #b0d8b8; color: #1e6a30; }
-.ctl.ability-btn[data-token="r"]:hover { background: #dcf0e0; }
+.ctl.ability-btn:hover { background: #e8dcf8; }
+.ctl.ability-btn[hidden] { display: none; }
+.ctl.ability-btn > span { line-height: 1; }
 
 
 /* ---- hotbar --------------------------------------------------------------- */

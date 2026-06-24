@@ -27,8 +27,9 @@
 // the mirrored step lands on a hazard. Skittish sheep are individuals.
 
 import * as terrain from "./terrain.js";
-import { classify, ROUND_LENGTH, WAIT_TOKEN, MOVE_TOKENS } from "./tokens.js";
+import { classify, ROUND_LENGTH, WAIT_TOKEN, abilitySlotOf } from "./tokens.js";
 import { Entity, SHEEP, HERO, ENEMY, rankOf } from "./entity.js";
+import { ABILITIES, lockAfter } from "./abilities.js";
 
 const ORTHOGONAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
@@ -47,153 +48,61 @@ export class Engine {
     const actions = new Map();
     const classified = new Map();
     for (const e of living) {
-      const tok = (e.kind === SHEEP && e.behavior === "skittish")
-        ? this._fleeToken(e)
-        : e.actionFor(this.tick, playerToken);
+      let tok;
+      if (e.kind === HERO && e.lockedTicks > 0) { e.lockedTicks -= 1; tok = WAIT_TOKEN; }
+      else tok = e.actionFor(this.tick, playerToken);
       actions.set(e, tok);
       classified.set(e, classify(tok));
     }
 
-    this._resolveCharges(living, classified);
-    this._resolveAbilities(living, classified);
+    this._resolveAbilities(living, actions, classified);
 
     // Intended destinations (post-ability) drive hero/enemy contact-death so a
     // hero that wins a contested square against a lethal enemy still dies.
     const intended = this._intendedTargets(living, classified);
 
-    const moved = this._resolveMovement(living, classified);
-    this._resolveBruteExtraStep(moved);
+    this._resolveMovement(living, classified);
     this._contactDeaths(intended);
 
-    for (const e of living) {
-      e.blocked = false;
-      e.barrier = false;
-    }
+    for (const e of living) { if (e.invuln > 0) e.invuln -= 1; }
 
     this.tick += 1;
   }
 
-  // --- charges --------------------------------------------------------------
+  // Add a freshly created entity (e.g. a Duplicate) to the board.
+  _spawn(entity) {
+    this.gmap.entities.push(entity);
+    this._index.set(entity, this.gmap.entities.length - 1);
+  }
 
-  // Arms ability_2 the tick 'r' is pressed; consumes the arm + fires on the
-  // entity's next "move" token, replacing that token's classification with
-  // ["charged_2", direction] so _resolveMovement leaves the entity in place.
-  _resolveCharges(living, classified) {
+  // --- abilities (modular, 3-slot loadout) --------------------------------
+
+  // A hero's slot token arms a directional ability (fires on the next move) or
+  // runs an instant one now. The action cost beyond the press + direction is
+  // paid as forced waits (lockedTicks).
+  _resolveAbilities(living, actions, classified) {
     for (const e of living) {
-      const [kind, dir] = classified.get(e);
-      if (kind === "ability_2") {
-        e.chargingAbility2 = true;
-      } else if (e.chargingAbility2 && kind === "move") {
-        e.chargingAbility2 = false;
-        classified.set(e, ["charged_2", dir]);
-      }
-    }
-  }
-
-  // --- abilities ----------------------------------------------------------
-
-  _resolveAbilities(living, classified) {
-    for (const e of living) {
-      const [actionType, dir] = classified.get(e);
-      if (actionType === "ability_1") this._executeAbility1(e);
-      else if (actionType === "charged_2") this._executeCharged2(e, dir);
-    }
-  }
-
-  _executeAbility1(e) {
-    if (e.entityType === "knight") e.blocked = true;        // BLOCK
-    else if (e.entityType === "rogue") e.repeatNext = true; // DASH (move again)
-    else if (e.entityType === "mage") e.barrier = true;     // BARRIER
-    else if (e.entityType === "brute") this._slam(e);       // SLAM
-    else if (e.entityType === "hunter") this._quickshot(e); // QUICKSHOT
-  }
-
-  _executeCharged2(e, dir) {
-    if (!dir || (dir[0] === 0 && dir[1] === 0)) return;
-    if (e.entityType === "knight") this._lunge(e, dir);
-    else if (e.entityType === "rogue") this._backstab(e, dir);
-    else if (e.entityType === "mage") this._chainBolt(e, dir);
-    else if (e.entityType === "brute") this._chargeAttack(e, dir);
-    else if (e.entityType === "hunter") this._snipe(e, dir);
-  }
-
-  // Knight: step into the target tile (if free), then stab the tile beyond.
-  _lunge(e, [dr, dc]) {
-    const nr = e.row + dr, nc = e.col + dc;
-    if (this._inBounds(nr, nc) && terrain.isPassable(this.gmap.terrain[nr][nc])
-        && !this._occupant(nr, nc, e)) {
-      e.row = nr; e.col = nc; e.lastMove = [dr, dc];
-      this._arrive(e, [dr, dc]);
-      if (!e.alive) return;
-    }
-    const tr = e.row + dr, tc = e.col + dc;
-    if (this._inBounds(tr, tc)) this._strike(tr, tc);
-  }
-
-  // Rogue: strikes 2 tiles away without moving.
-  _backstab(e, [dr, dc]) {
-    const tr = e.row + dr * 2, tc = e.col + dc * 2;
-    if (this._inBounds(tr, tc)) this._strike(tr, tc);
-  }
-
-  // Mage: a beam that hits every tile in a line until it would enter a wall.
-  _chainBolt(e, [dr, dc]) {
-    let r = e.row + dr, c = e.col + dc;
-    while (this._inBounds(r, c) && terrain.isPassable(this.gmap.terrain[r][c])) {
-      this._strike(r, c);
-      r += dr; c += dc;
-    }
-  }
-
-  // Brute: instant shockwave on all 4 adjacent tiles, no direction needed.
-  _slam(e) {
-    for (const [dr, dc] of ORTHOGONAL) {
-      const r = e.row + dr, c = e.col + dc;
-      if (this._inBounds(r, c)) this._strike(r, c);
-    }
-  }
-
-  // Brute: barrels forward until a wall or an entity; an entity hit is
-  // struck and the brute stops just short of it.
-  _chargeAttack(e, [dr, dc]) {
-    let r = e.row, c = e.col;
-    for (;;) {
-      const nr = r + dr, nc = c + dc;
-      if (!this._inBounds(nr, nc) || !terrain.isPassable(this.gmap.terrain[nr][nc])) break;
-      const occ = this._occupant(nr, nc, e);
-      if (occ) { this._strike(nr, nc); break; }
-      r = nr; c = nc;
-    }
-    if (r !== e.row || c !== e.col) {
-      e.row = r; e.col = c; e.lastMove = [dr, dc];
-      this._arrive(e, [dr, dc]);
-    }
-  }
-
-  // Hunter: instant shot 2 tiles along the entity's last move — no direction
-  // input, fitting an instant (ability_1) move.
-  _quickshot(e) {
-    const [dr, dc] = e.lastMove;
-    if (dr === 0 && dc === 0) return;
-    const tr = e.row + dr * 2, tc = e.col + dc * 2;
-    if (this._inBounds(tr, tc)) this._strike(tr, tc);
-  }
-
-  // Hunter: long-range shot, hits only the first entity (or stops at a wall).
-  _snipe(e, [dr, dc]) {
-    let r = e.row + dr, c = e.col + dc;
-    while (this._inBounds(r, c) && terrain.isPassable(this.gmap.terrain[r][c])) {
-      if (this._occupant(r, c)) { this._strike(r, c); return; }
-      r += dr; c += dc;
-    }
-  }
-
-  // Kills whatever living entity occupies (r, c), respecting BLOCK/BARRIER.
-  _strike(r, c) {
-    for (const e of this.gmap.entities) {
-      if (e.alive && e.row === r && e.col === c) {
-        if (e.blocked || e.barrier) continue;
-        e.alive = false;
+      if (!e.alive) continue;
+      const tok = actions.get(e);
+      const [kind] = classified.get(e);
+      if (kind === "ability") {
+        const slot = abilitySlotOf(tok);
+        const id = e.abilities && e.abilities[slot];
+        const ab = id && ABILITIES[id];
+        if (!ab) continue;
+        if (ab.directional) {
+          e.armedAbility = id; // wait for the next move to supply a direction
+        } else {
+          ab.run(this, e, [0, 0]);
+          e.lockedTicks = lockAfter(ab);
+        }
+      } else if (kind === "move" && e.armedAbility) {
+        const ab = ABILITIES[e.armedAbility];
+        e.armedAbility = null;
+        const [, dir] = classified.get(e);
+        ab.run(this, e, dir);
+        e.lockedTicks = lockAfter(ab);
+        classified.set(e, ["wait", [0, 0]]); // the move is consumed by the ability
       }
     }
   }
@@ -258,7 +167,7 @@ export class Engine {
     }
 
     if (occ) {
-      if (e.kind === HERO && occ.kind === ENEMY && occ.lethalToHero) {
+      if (e.kind === HERO && occ.kind === ENEMY && occ.lethalToHero && e.invuln <= 0) {
         e.alive = false; // contact death — hero does not advance
         return false;
       }
@@ -266,6 +175,7 @@ export class Engine {
         e.alive = false; // sheep walks into a sheep-killing enemy
         return false;
       }
+      if (occ.heavy) return false; // a Boulder can't be pushed
       if (rankOf(e.kind) > rankOf(occ.kind)) {
         if (!this._attemptPush(occ, dir)) return false; // push failed → blocked
         // occ vacated (moved or died); fall through
@@ -297,6 +207,7 @@ export class Engine {
         b.alive = false; // shoved into a sheep-killing enemy
         return true;     // b vacated (died) → the pusher advances
       }
+      if (occ.heavy) return false; // can't shove anything into a Boulder
       if (rankOf(b.kind) > rankOf(occ.kind)) {
         if (!this._attemptPush(occ, dir)) return false;
       } else {
@@ -309,35 +220,6 @@ export class Engine {
     if (isFlock) this._mirrorSheepDelta(b, dr, dc); // flock chain-reaction
     this._arrive(b, dir); // hazard kills; slip/glide/portal chain
     return true;
-  }
-
-  // Deterministic flee for a skittish sheep: step to maximise distance from the
-  // nearest hero, refusing walls, occupied tiles and hazards. Ties broken by the
-  // fixed w/a/s/d order; if nothing increases distance, wait.
-  _fleeToken(sheep) {
-    let target = null, best = Infinity;
-    for (const h of this.gmap.entities) {
-      if (!h.alive || h.kind !== HERO) continue;
-      const d = Math.abs(h.row - sheep.row) + Math.abs(h.col - sheep.col);
-      if (d < best || (d === best && this._index.get(h) < this._index.get(target))) {
-        best = d; target = h;
-      }
-    }
-    if (!target) return WAIT_TOKEN;
-
-    let bestTok = WAIT_TOKEN, bestDist = best;
-    for (const tok of ["w", "a", "s", "d"]) {
-      const [dr, dc] = MOVE_TOKENS[tok];
-      const nr = sheep.row + dr, nc = sheep.col + dc;
-      if (!this._inBounds(nr, nc)) continue;
-      const tid = this.gmap.terrain[nr][nc];
-      if (!terrain.isPassable(tid)) continue;                 // wall
-      if (terrain.effectOf(tid) === terrain.DIE) continue;    // self-preservation
-      if (this._occupant(nr, nc, sheep)) continue;            // blocked
-      const d = Math.abs(target.row - nr) + Math.abs(target.col - nc);
-      if (d > bestDist) { bestDist = d; bestTok = tok; }
-    }
-    return bestTok;
   }
 
   // Intended destination per living entity (origin + move dir if that tile is
@@ -371,6 +253,7 @@ export class Engine {
   _contactPass(intended, victimKind, isLethal) {
     for (const v of this.gmap.entities) {
       if (!v.alive || v.kind !== victimKind) continue;
+      if (v.invuln > 0) continue; // Invincible: immune to enemy contact this tick
       const [vr, vc] = intended.get(v) || [v.row, v.col];
       for (const en of this.gmap.entities) {
         if (!en.alive || en.kind !== ENEMY || !isLethal(en)) continue;
@@ -573,25 +456,6 @@ export class Engine {
     for (const other of this.gmap.entities) {
       if (other === source || !other.alive || other.kind !== SHEEP) continue;
       fn(other);
-    }
-  }
-
-  // --- brute --------------------------------------------------------------
-
-  // A Brute that made a plain move advances one extra tile in the same
-  // direction, so every move action covers 2 tiles.
-  _resolveBruteExtraStep(moved) {
-    for (const [e, [dr, dc]] of moved) {
-      if (!e.alive || e.entityType !== "brute") continue;
-      const nr = e.row + dr, nc = e.col + dc;
-      if (this._inBounds(nr, nc)
-          && terrain.isPassable(this.gmap.terrain[nr][nc])
-          && !this._occupant(nr, nc, e)) {
-        e.row = nr;
-        e.col = nc;
-        e.lastMove = [dr, dc];
-        this._arrive(e, [dr, dc]);
-      }
     }
   }
 

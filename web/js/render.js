@@ -182,12 +182,10 @@ export function updateBoard(board, gmap) {
         if (ent) {
           cell.div.dataset.entity = ent.letter;
           cell.div.classList.add(`ent-${ent.kind}`);
-          if (ent.blocked) cell.div.classList.add('blocked');
-          if (ent.barrier) cell.div.classList.add('barrier');
-          if (ent.chargingAbility2) cell.div.classList.add('charging');
+          if (ent.invuln > 0) cell.div.classList.add('barrier');
+          if (ent.armedAbility) cell.div.classList.add('charging');
           cell.inner.textContent = ent.letter;
           cell.inner.classList.add('glyph');
-          if (ent.entityType) cell.inner.classList.add(`type-${ent.entityType}`);
         }
       }
     }
@@ -348,9 +346,8 @@ export function buildInitialLog(gmap) {
   entries.push({ cls: "header", text: "Entities:" });
   for (const e of gmap.entities) {
     const kindName = e.kind === HERO ? "Hero" : e.kind === SHEEP ? "Sheep" : "Enemy";
-    const typeName = e.entityType ? ` ${e.entityType}` : "";
     const loopStr  = e.loop.length ? e.loop.join(" ") : "player";
-    entries.push({ cls: "sep", text: `  ${e.letter} (${kindName}${typeName}) @ [${e.row}][${e.col}]  loop: ${loopStr}` });
+    entries.push({ cls: "sep", text: `  ${e.letter} (${kindName}) @ [${e.row}][${e.col}]  loop: ${loopStr}` });
   }
   entries.push({ cls: "sep", text: "" });
   entries.push({ cls: "header", text: "Enemy & sheep loops:" });

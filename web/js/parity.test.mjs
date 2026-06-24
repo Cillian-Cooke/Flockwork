@@ -141,33 +141,57 @@ const wait = Array(10).fill(".");
   check("swap_blocked", pos(a) === "0,0" && pos(b) === "1,0");
 })();
 
-// --- skittish flee --------------------------------------------------------
+// --- abilities (3-slot loadout) -------------------------------------------
 
-// a skittish sheep steps directly away from the hero
+const HA = (row, col, abilities) =>
+  new Entity({ letter: "P", kind: HERO, row, col, abilities });
+
+// Duplicate (slot 1): arm, then a move spawns a copy in that direction; hero stays
 (() => {
-  const h = E("P", HERO, 0, 0);
-  const s = E("s", SHEEP, 0, 2, [], { behavior: "skittish" });
-  const eng = new Engine(mk([[1, 1, 1, 1, 1]], [h, s]));
-  eng.step(".");
-  check("skittish_flees", pos(s) === "0,3");
+  const h = HA(1, 1, ["duplicate"]);
+  const eng = new Engine(mk(grass(3, 3), [h]));
+  eng.step("1"); eng.step("d");
+  const dup = eng.gmap.entities.find((x) => x !== h);
+  check("ability_duplicate_spawns_copy",
+    eng.gmap.entities.length === 2 && dup && pos(dup) === "1,2" && pos(h) === "1,1");
 })();
 
-// a pushed skittish sheep does NOT also flee the same tick (no double move)
+// Duplicate costs 3 actions → hero is locked the tick after firing
 (() => {
-  const h = E("P", HERO, 1, 1);
-  const s = E("s", SHEEP, 1, 2, [], { behavior: "skittish" });
-  const eng = new Engine(mk([[2, 2, 2, 2, 2], [2, 1, 1, 1, 3], [2, 2, 2, 2, 2]], [h, s]));
-  eng.step("d"); // hero pushes sheep to (1,3); it must not then flee into the lava at (1,4)
-  check("skittish_no_double_move", s.alive && pos(s) === "1,3" && pos(h) === "1,2");
+  const h = HA(1, 1, ["duplicate"]);
+  const eng = new Engine(mk(grass(3, 5), [h]));
+  eng.step("1"); eng.step("d"); // fire (press + direction = 2 actions)
+  eng.step("w"); const locked = pos(h); // 3rd action spent as a forced wait
+  eng.step("w"); const freed = pos(h);
+  check("ability_cost_locks_hero", locked === "1,1" && freed === "0,1");
 })();
 
-// a skittish sheep refuses to flee onto a hazard (self-preservation)
+// Hook (slot 1): drag the first entity in line one tile toward the hero
 (() => {
-  const h = E("P", HERO, 0, 0);
-  const s = E("s", SHEEP, 0, 1, [], { behavior: "skittish" });
-  const eng = new Engine(mk([[1, 1, 3]], [h, s])); // only escape (right) is lava
-  eng.step(".");
-  check("skittish_avoids_hazard", s.alive && pos(s) === "0,1");
+  const h = HA(1, 0, ["hook"]);
+  const s = E("s", SHEEP, 1, 2, wait);
+  const eng = new Engine(mk(grass(3, 4), [h, s]));
+  eng.step("1"); eng.step("d");
+  check("ability_hook_pulls", pos(s) === "1,1" && pos(h) === "1,0");
+})();
+
+// Charge (slot 1): barrel forward, shoving a sheep into lava
+(() => {
+  const t = grass(1, 4); t[0][3] = 3;
+  const h = HA(0, 0, ["charge"]);
+  const s = E("s", SHEEP, 0, 1, wait);
+  const eng = new Engine(mk(t, [h, s]));
+  eng.step("1"); eng.step("d");
+  check("ability_charge_shoves_into_lava", !s.alive);
+})();
+
+// Invincible (instant slot 1): survive a guard contact on the next move
+(() => {
+  const h = HA(0, 0, ["shield"]);
+  const g = E("a", ENEMY, 0, 1, wait, { lethalToHero: true });
+  const eng = new Engine(mk(grass(1, 3), [h, g]));
+  eng.step("1"); eng.step("d");
+  check("ability_shield_survives_guard", h.alive && pos(h) === "0,1");
 })();
 
 // --- terrain (unchanged effects still hold) -------------------------------
