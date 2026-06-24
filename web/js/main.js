@@ -6,7 +6,7 @@ import { initBoard, updateBoard, startRafLoop, buildInitialLog, buildTickEntries
 import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf } from "./tokens.js";
 import { describeTerrain } from "./terrain.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
-import { ABILITIES } from "./abilities.js";
+import { ABILITIES, lockAfter } from "./abilities.js";
 import { initRiv, buildFilmstrips, playYouLose } from "./riv.js";
 
 // The loaded hero's ability loadout (3 slots) — drives the ability buttons and
@@ -261,55 +261,66 @@ function tokenGlyph(token) {
   return SYMBOL[token] || token;
 }
 
-// Highlight a directional ability tile through to the move that fires it, so a
-// charged action visibly spans every tile from the press to its trigger.
-function annotateCharges(tokens) {
-  const active = new Set();
-  const starts = new Map(); // start index -> ticks until it fires
-  const ends   = new Set();
-  let chargeStart = null;
+// Walk the queued tokens exactly as the engine would, tagging each tile with its
+// role in an ability: 'cast' (the press), 'active' (armed, waiting for a
+// direction), 'fire' (the move that triggers it) and 'lock' (extra action-slots
+// a costly ability eats as forced waits). Lets the hotbar show how many actions
+// an ability really spends.
+function annotateAbilities(tokens) {
+  const role = new Map();  // index -> role string
+  const cost = new Map();  // cast index -> total action cost
+  let armed = null, castIdx = -1, lock = 0;
   tokens.forEach((tok, i) => {
+    if (lock > 0) { role.set(i, "lock"); lock -= 1; return; } // consumed by a costly ability
     const slot = abilitySlotOf(tok);
     const ab = slot >= 0 ? ABILITIES[currentAbilities[slot]] : null;
-    if (ab && ab.directional) {
-      chargeStart = i;
-      active.add(i);
-    } else if (chargeStart !== null) {
-      active.add(i);
-      if (classify(tok)[0] === "move") {
-        ends.add(i);
-        starts.set(chargeStart, i - chargeStart);
-        chargeStart = null;
-      }
+    if (ab) {
+      role.set(i, "cast");
+      cost.set(i, ab.cost);
+      if (ab.directional) { armed = ab; castIdx = i; }
+      else { lock = lockAfter(ab); armed = null; }          // instant: lock starts now
+    } else if (armed && classify(tok)[0] === "move") {
+      role.set(i, "fire");
+      cost.set(castIdx, armed.cost);
+      lock = lockAfter(armed); armed = null;                // directional: lock starts after firing
+    } else if (armed) {
+      role.set(i, "active");
     }
   });
-  return { active, starts, ends };
+  return { role, cost };
 }
 
-function makeTile(token, tickNo, solid, index, chargeInfo) {
+function makeTile(token, tickNo, solid, index, info) {
   const tile = document.createElement("div");
   const classes = ["tile", tileKind(token), solid ? "solid" : "ghost"];
   const slot = abilitySlotOf(token);
   const ab = slot >= 0 ? ABILITIES[currentAbilities[slot]] : null;
+  const role = info.role.get(index);
   let title = `tick ${tickNo}: ${ab ? ab.name : tokenLabel(token)}`;
   let badge = "";
+  let glyph = tokenGlyph(token);
 
-  if (chargeInfo.active.has(index)) classes.push("charge-active");
-  if (chargeInfo.starts.has(index)) {
-    classes.push("charge-start");
-    const span = chargeInfo.starts.get(index);
-    title += ` — fires ${span} tick${span === 1 ? "" : "s"} later`;
-  } else if (chargeInfo.active.has(index) && !chargeInfo.ends.has(index)) {
+  if (role === "cast") {
+    classes.push("ability-cast");
+    const c = info.cost.get(index) || 1;
+    badge = `<span class="tile-cost-badge">×${c}</span>`;
+    if (c >= 3) classes.push("ability-costly");
+    title += ` — costs ${c} action${c > 1 ? "s" : ""}`;
+  } else if (role === "active") {
+    classes.push("ability-active");
     title += " — armed, waiting for a direction";
-  }
-  if (chargeInfo.ends.has(index)) {
-    classes.push("charge-end");
+  } else if (role === "fire") {
+    classes.push("ability-fire");
     title += " — ability fires here";
+  } else if (role === "lock") {
+    classes.push("ability-lock");
+    glyph = "🔒";
+    title += " — locked: the ability is still resolving (this action is spent)";
   }
 
   tile.className = classes.join(" ");
   tile.title = title;
-  tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${tokenGlyph(token)}${badge}`;
+  tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${glyph}${badge}`;
   if (solid) { tile.dataset.index = index; }
   return tile;
 }
@@ -318,10 +329,10 @@ function renderHotbar() {
   hotbarEl.innerHTML = "";
   const n = currentMoves.length;
   if (n) {
-    const displayed   = Array.from({ length: ROUND_LENGTH }, (_, i) => currentMoves[i % n]);
-    const chargeInfo  = annotateCharges(displayed);
+    const displayed = Array.from({ length: ROUND_LENGTH }, (_, i) => currentMoves[i % n]);
+    const info = annotateAbilities(displayed);
     for (let i = 0; i < ROUND_LENGTH; i++) {
-      hotbarEl.appendChild(makeTile(displayed[i], i + 1, i < n, i, chargeInfo));
+      hotbarEl.appendChild(makeTile(displayed[i], i + 1, i < n, i, info));
     }
   } else {
     const hint = document.createElement("span");

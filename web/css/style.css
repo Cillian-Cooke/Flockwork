@@ -710,13 +710,37 @@ body {
   position: relative;
 }
 
-.tile.charge-active { box-shadow: inset 0 -4px 0 0 var(--charge); }
-.tile.charge-start  { outline: 2px solid var(--charge); outline-offset: 2px; }
-.tile.charge-end    { outline: 2px dashed var(--charge); outline-offset: 2px; }
-.tile-charge-badge {
-  position: absolute; top: 2px; right: 3px;
-  font-size: clamp(6px, 1.8vw, 8px); font-weight: 700; color: #3a2a08;
-  background: var(--charge); border-radius: 4px; padding: 0 3px; line-height: 1.3;
+/* Ability span in the hotbar: cast → (armed) → fire → locked overhead. A purple
+   underline ties the whole multi-action ability together. */
+.tile.ability-cast,
+.tile.ability-active,
+.tile.ability-fire,
+.tile.ability-lock { box-shadow: inset 0 -4px 0 0 var(--charge); }
+.tile.ability-cast { outline: 2px solid var(--charge); outline-offset: 2px; }
+.tile.ability-fire { outline: 2px dashed var(--charge); outline-offset: 2px; }
+
+/* Locked slots a costly ability eats — clearly spent: dimmed + a lock glyph. */
+.tile.ability-lock {
+  filter: grayscale(0.6);
+  opacity: 0.5;
+}
+
+/* The action-cost badge. Bigger and red for the expensive (3+) abilities so it's
+   unmistakable that they swallow several actions. */
+.tile-cost-badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 14px; height: 14px; padding: 0 2px;
+  display: grid; place-items: center;
+  font-size: clamp(8px, 2.4vw, 11px); font-weight: 800; line-height: 1;
+  color: #3a2a08; background: var(--charge);
+  border: 1.5px solid #fff; border-radius: 999px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.tile.ability-costly { outline-width: 3px; }
+.tile.ability-costly .tile-cost-badge {
+  color: #fff; background: #d43030;
+  min-width: 17px; height: 17px;
+  font-size: clamp(9px, 2.8vw, 13px);
 }
 
 /* Floating clone that follows the pointer while dragging a hotbar tile */
