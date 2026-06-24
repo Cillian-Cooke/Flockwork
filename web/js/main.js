@@ -84,9 +84,8 @@ const endScore    = document.getElementById("end-score");
 const endShare    = document.getElementById("end-share");
 let lastShareText = "";
 
-// Public play link included in every shared result. Change this if the
-// production domain differs (the Vercel project dashboard URL is NOT playable).
-const GAME_URL = "https://flockwork.vercel.app";
+// Link included in every shared result.
+const GAME_URL = "https://vercel.com/cillian-cookes-projects/flockwork";
 
 // --- helpers --------------------------------------------------------------
 
