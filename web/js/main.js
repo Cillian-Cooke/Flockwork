@@ -4,7 +4,7 @@ import { simulateTo, parseMoves, setActiveLevel, getActiveLevel } from "./game.j
 import { buildGameMap, MapError } from "./mapdata.js";
 import { initBoard, updateBoard, startRafLoop, buildInitialLog, buildTickEntries } from "./render.js";
 import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf, isMoveToken, AIM_TOKEN, LOCK_TOKEN } from "./tokens.js";
-import { describeTerrain } from "./terrain.js";
+import { describeTerrain, effectOf, DIE } from "./terrain.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
 import { ABILITIES, lockAfter } from "./abilities.js";
 import { initRiv, buildFilmstrips, playYouLose } from "./riv.js";
@@ -328,22 +328,17 @@ function makeTile(token, tickNo, solid, index, info) {
   return tile;
 }
 
-function makeEmptyTile(tickNo) {
-  const tile = document.createElement("div");
-  tile.className = "tile empty";
-  tile.title = `tick ${tickNo}: empty (waits)`;
-  tile.innerHTML = `<span class="tile-tick">${tickNo}</span>`;
-  return tile;
-}
-
 function renderHotbar() {
   hotbarEl.innerHTML = "";
   const n = currentMoves.length;
   if (n) {
-    const info = annotateAbilities(currentMoves);
+    // The round fills 10 ticks by repeating your queued actions; the repeats are
+    // shown as transparent "ghost" tiles. Ability blocks (cast + direction +
+    // lock) repeat whole, so a multi-action ability still reads as one unit.
+    const displayed = Array.from({ length: ROUND_LENGTH }, (_, i) => currentMoves[i % n]);
+    const info = annotateAbilities(displayed);
     for (let i = 0; i < ROUND_LENGTH; i++) {
-      hotbarEl.appendChild(i < n ? makeTile(currentMoves[i], i + 1, true, i, info)
-                                 : makeEmptyTile(i + 1));
+      hotbarEl.appendChild(makeTile(displayed[i], i + 1, i < n, i, info));
     }
   } else {
     const hint = document.createElement("span");
@@ -425,6 +420,22 @@ function clearMoves() {
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
+// Entities that died on a lava/void tile between two snapshots (matched by their
+// stable creation index), so playback can flash them on the hazard before they
+// vanish — making "pushed into the lava" read clearly.
+function hazardDeaths(prevSnap, curSnap) {
+  if (!prevSnap || !curSnap) return [];
+  const prev = prevSnap.gmap.entities, cur = curSnap.gmap.entities;
+  const out = [];
+  for (let i = 0; i < Math.min(prev.length, cur.length); i++) {
+    const p = prev[i], c = cur[i];
+    if (p.alive && !c.alive && effectOf(curSnap.gmap.terrain[c.row]?.[c.col]) === DIE) {
+      out.push({ row: c.row, col: c.col, letter: c.letter, kind: c.kind, entityType: c.entityType });
+    }
+  }
+  return out;
+}
+
 async function playRound() {
   if (playing || playingThrough) return;
   if (currentMoves.includes(AIM_TOKEN)) {
@@ -440,13 +451,24 @@ async function playRound() {
   for (let t = 1; t <= ROUND_LENGTH; t++) {
     const pos = roundMoves.length * ROUND_LENGTH + t;
     maxGlobalPos = pos;
+    const prevSnap = lastSnapshot;
     const snap = renderGlobal(pos);
 
     // Highlight the tile slot that is executing this tick.
     const hotbarTiles = [...hotbarEl.children];
     hotbarTiles.forEach((tile, i) => tile.classList.toggle("playing", i === t - 1));
 
-    await delay(500);
+    // If anything fell into lava/void this tick, flash it on the hazard (with the
+    // pusher already on its old tile) before it vanishes.
+    const dying = hazardDeaths(prevSnap, snap);
+    if (dying.length && board) {
+      updateBoard(board, snap.gmap, dying);
+      await delay(300);
+      updateBoard(board, snap.gmap);
+      await delay(220);
+    } else {
+      await delay(500);
+    }
     if (snap.status !== "playing") {
       hotbarTiles.forEach(tile => tile.classList.remove("playing"));
       playing = false;
@@ -706,19 +728,25 @@ function showSaveOptions(data) {
   saveOptionsEl.hidden = false;
 }
 
-// Paint the three ability buttons from the loaded hero's loadout; hide empties.
+// Paint the three ability buttons from the loaded hero's loadout. Unused slots
+// stay visible as empty placeholders, so it's clear abilities can go there.
 function updateAbilityButtons() {
   for (let i = 0; i < 3; i++) {
     const btn = document.getElementById(`ability-${i + 1}`);
     if (!btn) continue;
     const ab = ABILITIES[currentAbilities[i]];
     const span = btn.querySelector("span");
+    btn.hidden = false;
     if (ab) {
-      btn.hidden = false;
+      btn.classList.remove("ability-empty");
+      btn.disabled = false;
       if (span) span.textContent = ab.glyph;
       btn.title = `${ab.name} — ${ab.desc}`;
     } else {
-      btn.hidden = true;
+      btn.classList.add("ability-empty");
+      btn.disabled = true;
+      if (span) span.textContent = "";
+      btn.title = `Ability slot ${i + 1} — empty (equip an ability here)`;
     }
   }
 }
@@ -947,6 +975,7 @@ function onPointerMove(e) {
   if (!dragging) {
     if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
     dragging = true;
+    clearTimeout(holdTimer); // a real drag started — not a hold
     if (dragSource === "reorder") {
       const tile = hotbarEl.querySelector(`.tile.solid[data-index="${dragIndex}"]`);
       if (tile) { tile.classList.add("dragging"); startGhost(tile, e.clientX, e.clientY); }
@@ -965,6 +994,8 @@ function onPointerUp(e) {
   document.removeEventListener("pointermove", onPointerMove);
   document.removeEventListener("pointerup", onPointerUp);
   document.removeEventListener("pointercancel", onPointerCancel);
+  clearTimeout(holdTimer);
+  if (holdActive) { hideHoldExplain(); clearDragState(); return; } // a hold, not a tap/drag
 
   if (dragging) {
     if (dragSource === "reorder") {
@@ -1003,6 +1034,8 @@ function onPointerCancel() {
   document.removeEventListener("pointermove", onPointerMove);
   document.removeEventListener("pointerup", onPointerUp);
   document.removeEventListener("pointercancel", onPointerCancel);
+  clearTimeout(holdTimer);
+  hideHoldExplain();
   clearDragState();
 }
 
@@ -1031,11 +1064,56 @@ document.querySelectorAll(".controls [data-token]").forEach(btn => {
     dragPointerId = e.pointerId;
     startX = e.clientX;
     startY = e.clientY;
+    // Press and hold to read what the button does (until you let go).
+    holdBtn = btn;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(showHoldExplain, 450);
     document.addEventListener("pointermove", onPointerMove);
     document.addEventListener("pointerup", onPointerUp);
     document.addEventListener("pointercancel", onPointerCancel);
   });
 });
+
+// --- hold-to-explain ------------------------------------------------------
+
+let holdTimer = null, holdActive = false, holdBtn = null;
+const holdPopup = document.createElement("div");
+holdPopup.className = "hold-explain";
+holdPopup.hidden = true;
+document.body.appendChild(holdPopup);
+
+function describeAction(token) {
+  const slot = abilitySlotOf(token);
+  if (slot >= 0) {
+    const ab = ABILITIES[currentAbilities[slot]];
+    return ab
+      ? `<b>${ab.name}</b> · costs ${ab.cost} action${ab.cost > 1 ? "s" : ""}<br>${ab.desc}`
+      : `<b>Ability slot ${slot + 1}</b><br>Empty — an ability can be equipped here.`;
+  }
+  if (isMoveToken(token)) {
+    const lbl = { w: "up", a: "left", s: "down", d: "right" }[token];
+    return `<b>Move ${lbl}</b><br>Step one tile. Walk into a sheep to push it — shove it into lava or void to kill it.`;
+  }
+  if (token === WAIT_TOKEN) return `<b>Wait</b><br>Hold position for one tick.`;
+  return tokenLabel(token);
+}
+
+function showHoldExplain() {
+  if (dragging || !holdBtn) return;
+  holdActive = true;
+  holdPopup.innerHTML = describeAction(holdBtn.dataset.token);
+  holdPopup.hidden = false;
+  const r = holdBtn.getBoundingClientRect();
+  holdPopup.style.left = `${Math.round(r.left + r.width / 2)}px`;
+  holdPopup.style.top = `${Math.round(r.top - 8)}px`;
+}
+
+function hideHoldExplain() {
+  if (holdActive) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 0); }
+  holdActive = false;
+  holdPopup.hidden = true;
+  holdBtn = null;
+}
 
 // --- chat / JSON log ------------------------------------------------------
 

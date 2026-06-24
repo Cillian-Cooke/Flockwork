@@ -112,7 +112,7 @@ function inCircle(dr, dc, vision) {
 }
 
 // Sync animation targets and cell overlays to the current game snapshot.
-export function updateBoard(board, gmap) {
+export function updateBoard(board, gmap, dying = []) {
   if (!gmap) return;
   const { vision, animCells, cells, screenDim, gridEl, cellSize } = board;
 
@@ -189,6 +189,18 @@ export function updateBoard(board, gmap) {
         }
       }
     }
+  }
+
+  // Death beat: draw entities that just fell into lava/void on the hazard tile
+  // for one frame (they vanish next frame) so the cause of death is visible.
+  for (const d of dying) {
+    const si = vision + (d.row - heroRow);
+    const sj = vision + (d.col - heroCol);
+    if (si < 0 || si >= screenDim || sj < 0 || sj >= screenDim) continue;
+    const cell = cells[si][sj];
+    cell.inner.textContent = d.letter;
+    cell.inner.className = `cell-inner glyph dying${d.entityType ? ` type-${d.entityType}` : ""}`;
+    cell.div.classList.add(`ent-${d.kind}`);
   }
 
   // Rebuild boundary index labels outside the grid (same style as original)

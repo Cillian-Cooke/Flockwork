@@ -252,6 +252,14 @@ body {
 .cell.barrier { outline: 3px dashed #58b8d8; outline-offset: -3px; }
 .cell.charging { outline: 3px dotted var(--charge); outline-offset: -3px; }
 
+/* Death beat: an entity that just fell into lava/void sinks and fades for a
+   frame on the hazard tile before disappearing. */
+.cell-inner.dying { animation: tile-sink 0.3s ease-in forwards; }
+@keyframes tile-sink {
+  from { transform: translateY(0)    scale(1);   opacity: 1; }
+  to   { transform: translateY(28%)  scale(0.55); opacity: 0.15; }
+}
+
 /* entity-type fills (placeholder colours) — win on specificity over ent-hero/enemy */
 .cell-inner.glyph.type-knight::before { background: var(--type-knight); }
 .cell-inner.glyph.type-rogue::before  { background: var(--type-rogue); }
@@ -628,6 +636,21 @@ body {
 .ctl.ability-btn[hidden] { display: none; }
 .ctl.ability-btn > span { line-height: 1; }
 
+/* Empty loadout slot — a faint dashed placeholder showing an ability can go here. */
+.ctl.ability-btn.ability-empty {
+  background: transparent;
+  border: 1.5px dashed var(--line);
+  box-shadow: none;
+  cursor: default;
+  position: relative;
+}
+.ctl.ability-btn.ability-empty::after {
+  content: "+";
+  font-size: 18px; font-weight: 700;
+  color: var(--muted); opacity: 0.4;
+}
+.ctl.ability-btn.ability-empty:hover { background: transparent; }
+
 
 /* ---- hotbar --------------------------------------------------------------- */
 
@@ -836,6 +859,24 @@ body {
 }
 .tooltip .tt-title { font-weight: 800; color: var(--accent); }
 .tooltip .tt-sub   { color: var(--muted); }
+
+/* Press-and-hold explanation popup (sits above the held button). */
+.hold-explain {
+  position: fixed;
+  transform: translate(-50%, -100%);
+  z-index: 100;
+  max-width: 210px;
+  background: #1c1c22;
+  color: #fff;
+  padding: 8px 11px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  pointer-events: none;
+}
+.hold-explain b { color: #ffd27a; }
+.hold-explain[hidden] { display: none; }
 
 /* ---- mobile tap-to-inspect popup ------------------------------------------ */
 
