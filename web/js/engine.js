@@ -41,6 +41,7 @@ export class Engine {
     this._index = new Map();
     gmap.entities.forEach((e, i) => this._index.set(e, i));
     this._portals = this._findPortals();
+    this._crackState = new Map(); // "r,c" -> remaining traversals on a cracking tile
   }
 
   step(playerToken) {
@@ -62,11 +63,73 @@ export class Engine {
     const intended = this._intendedTargets(living, classified);
 
     this._resolveMovement(living, classified);
+    this._resolveConveyors();   // carry anything sitting on a conveyor
     this._contactDeaths(intended);
+    this._resolveSpikes();      // toggling traps kill whatever's on them when active
 
     for (const e of living) { if (e.invuln > 0) e.invuln -= 1; }
 
     this.tick += 1;
+  }
+
+  // --- Phase 2 tiles ------------------------------------------------------
+
+  // Dynamic "can a mover enter (r,c) heading `dir`?" — handles gates (open only
+  // while a plate is pressed) and one-way tiles (entered from one side only).
+  _canEnter(r, c, dir) {
+    if (!this._inBounds(r, c)) return false;
+    const id = this.gmap.terrain[r][c];
+    const eff = terrain.effectOf(id);
+    if (eff === terrain.WALL) return false;
+    if (eff === terrain.GATE) return this._gatesOpen();
+    if (eff === terrain.ONEWAY) {
+      const allow = terrain.onewayDir(id);
+      return !!(dir && allow && dir[0] === allow[0] && dir[1] === allow[1]);
+    }
+    return true;
+  }
+
+  _gatesOpen() {
+    for (const e of this.gmap.entities) {
+      if (e.alive && terrain.effectOf(this.gmap.terrain[e.row][e.col]) === terrain.PLATE) return true;
+    }
+    return false;
+  }
+
+  // After movement, carry every entity standing on a conveyor one tile in its
+  // arrow direction. Multiple passes let a line of entities shuffle forward.
+  _resolveConveyors() {
+    const riders = [];
+    for (const e of this.gmap.entities) {
+      if (!e.alive) continue;
+      const dir = terrain.conveyorDir(this.gmap.terrain[e.row][e.col]);
+      if (dir) riders.push([e, dir]);
+    }
+    if (!riders.length) return;
+    for (let pass = 0; pass < riders.length + 1; pass++) {
+      let moved = false;
+      for (const [e, dir] of riders) {
+        if (!e.alive || e._convMoved) continue;
+        const nr = e.row + dir[0], nc = e.col + dir[1];
+        if (!this._canEnter(nr, nc, dir) || this._occupant(nr, nc, e)) continue;
+        e.row = nr; e.col = nc; e.lastMove = dir; e._convMoved = true;
+        this._arrive(e, dir);
+        moved = true;
+      }
+      if (!moved) break;
+    }
+    for (const [e] of riders) delete e._convMoved;
+  }
+
+  // Toggling spike traps kill anything standing on an active one (hero survives
+  // while Invincible).
+  _resolveSpikes() {
+    for (const e of this.gmap.entities) {
+      if (!e.alive) continue;
+      if (!terrain.spikeActive(this.gmap.terrain[e.row][e.col], this.tick)) continue;
+      if (e.kind === HERO && e.invuln > 0) continue;
+      e.alive = false;
+    }
   }
 
   // Add a freshly created entity (e.g. a Duplicate) to the board.
@@ -155,9 +218,7 @@ export class Engine {
     if (!dir) return false; // not a mover
     const [dr, dc] = dir;
     const nr = e.row + dr, nc = e.col + dc;
-    if (!this._inBounds(nr, nc) || !terrain.isPassable(this.gmap.terrain[nr][nc])) {
-      return false; // wall / out of bounds
-    }
+    if (!this._canEnter(nr, nc, dir)) return false; // wall / closed gate / wrong side of a one-way
 
     let occ = this._occupant(nr, nc, e);
     if (occ && !this._resolved.has(occ) && moveDir.has(occ)) {
@@ -196,9 +257,7 @@ export class Engine {
   _attemptPush(b, dir) {
     const [dr, dc] = dir;
     const nr = b.row + dr, nc = b.col + dc;
-    if (!this._inBounds(nr, nc) || !terrain.isPassable(this.gmap.terrain[nr][nc])) {
-      return false; // pushed into a wall / off the map
-    }
+    if (!this._canEnter(nr, nc, dir)) return false; // shoved into a wall / closed gate / one-way
     const occ = this._occupant(nr, nc, b);
     if (occ) {
       if (b.kind === SHEEP && occ.kind === ENEMY && occ.lethalToSheep) {
@@ -275,6 +334,14 @@ export class Engine {
       if (eff === terrain.DIE) {
         e.alive = false;
         return;
+      }
+      if (eff === terrain.CRACK) {
+        const id = this.gmap.terrain[e.row][e.col];
+        const k = `${e.row},${e.col}`;
+        const left = this._crackState.has(k) ? this._crackState.get(k) : terrain.crackUses(id);
+        if (left <= 0) { e.alive = false; return; } // already collapsed → fall into void
+        this._crackState.set(k, left - 1);
+        return; // safe this time
       }
       if (eff === terrain.SKIP) {
         e.skipNext = true;

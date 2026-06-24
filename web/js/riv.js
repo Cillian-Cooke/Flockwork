@@ -22,7 +22,15 @@ export const TERRAIN_FALLBACK = {
   11: '#f0d878', // ward
   12: '#d83ad8', // warp
   13: '#ff5ab0', // mirror
+  14: '#c0392b', // spike (active even)
+  15: '#e67e22', // spike (active odd)
+  16: '#8a97b0', 17: '#8a97b0', 18: '#8a97b0', 19: '#8a97b0', // conveyors
+  20: '#7fae7f', 21: '#7fae7f', 22: '#7fae7f', 23: '#7fae7f', // one-way
+  24: '#f1c40f', // pressure plate
+  25: '#4a4a55', // gate (closed)
 };
+// Cracking tiles 91-99 — browner the fewer uses remain.
+for (let u = 1; u <= 9; u++) TERRAIN_FALLBACK[90 + u] = '#9c6b3f';
 
 let _rive = null;
 

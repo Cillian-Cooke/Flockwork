@@ -233,6 +233,73 @@ const HA = (row, col, abilities) =>
   check("portal_lowest_index", pos(h) === "0,0");
 })();
 
+// --- Phase 2 tiles --------------------------------------------------------
+
+// conveyor (17 = right) carries the hero after it acts
+(() => {
+  const h = E("P", HERO, 0, 1);
+  const eng = new Engine(mk([[1, 17, 1, 1]], [h]));
+  eng.step(".");
+  check("conveyor_carries", pos(h) === "0,2");
+})();
+
+// cracking tile (91 = 1 use) collapses; re-entering it is fatal
+(() => {
+  const h = E("P", HERO, 0, 0);
+  const eng = new Engine(mk([[1, 91, 1]], [h]));
+  eng.step("d"); eng.step("d"); eng.step("a"); // enter, leave, re-enter collapsed
+  check("crack_collapses", !h.alive);
+})();
+
+// gate (25) opens only while a plate (24) is occupied
+(() => {
+  const open = new Engine(mk([[1, 25, 1], [24, 1, 1]],
+    [E("P", HERO, 0, 0), E("s", SHEEP, 1, 0, wait)]));
+  open.step("d");
+  const shut = new Engine(mk([[1, 25, 1], [24, 1, 1]],
+    [E("P", HERO, 0, 0), E("s", SHEEP, 1, 2, wait)]));
+  shut.step("d");
+  check("gate_plate_gating",
+    pos(open.gmap.entities[0]) === "0,1" && pos(shut.gmap.entities[0]) === "0,0");
+})();
+
+// one-way (21 = enter moving right) admits from the left, blocks from the right
+(() => {
+  const a = new Engine(mk([[1, 21, 1]], [E("P", HERO, 0, 0)])); a.step("d");
+  const b = new Engine(mk([[1, 21, 1]], [E("P", HERO, 0, 2)])); b.step("a");
+  check("oneway_direction",
+    pos(a.gmap.entities[0]) === "0,1" && pos(b.gmap.entities[0]) === "0,2");
+})();
+
+// spike (14 = active on even ticks) kills on its active tick
+(() => {
+  const h = E("P", HERO, 0, 0);
+  const eng = new Engine(mk([[1, 14, 1]], [h]));
+  eng.step("d"); // tick 0 is even → spike active → hero dies on it
+  check("spike_kills_on_active", !h.alive);
+})();
+
+// --- Phase 2 enemies ------------------------------------------------------
+
+// a Boulder (heavy) cannot be pushed by the hero
+(() => {
+  const h = E("P", HERO, 0, 0);
+  const b = E("a", ENEMY, 0, 1, wait, { heavy: true, lethalToHero: false });
+  const eng = new Engine(mk([[1, 1, 1]], [h, b]));
+  eng.step("d");
+  check("boulder_unpushable", pos(h) === "0,0" && pos(b) === "0,1");
+})();
+
+// a Wolf (lethalToSheep) eats a sheep shoved into it
+(() => {
+  const h = E("P", HERO, 0, 0);
+  const s = E("s", SHEEP, 0, 1, wait);
+  const w = E("a", ENEMY, 0, 2, wait, { lethalToSheep: true });
+  const eng = new Engine(mk([[1, 1, 1]], [h, s, w]));
+  eng.step("d");
+  check("wolf_eats_pushed_sheep", !s.alive && pos(h) === "0,1");
+})();
+
 // --- simulateTo (UI scrubber path) ----------------------------------------
 
 // a one-shove map wins, and re-simulating the same input is deterministic

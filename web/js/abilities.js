@@ -90,6 +90,8 @@ export const ABILITIES = {
           if (rankOf(hero.kind) > rankOf(occ.kind)) { if (!engine._attemptPush(occ, dir)) break; }
           else break;
         }
+        // Don't barrel onto a hazard — stop short (the shoved entity still fell in).
+        if (terrain.effectOf(engine.gmap.terrain[nr][nc]) === terrain.DIE) break;
         hero.row = nr; hero.col = nc; hero.lastMove = dir;
         engine._arrive(hero, dir);
         if (!hero.alive) return;
