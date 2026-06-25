@@ -84,8 +84,8 @@ const endScore    = document.getElementById("end-score");
 const endShare    = document.getElementById("end-share");
 let lastShareText = "";
 
-// Link included in every shared result.
-const GAME_URL = "https://vercel.com/cillian-cookes-projects/flockwork";
+// Public play link included in every shared result.
+const GAME_URL = "https://flockwork.vercel.app";
 
 // --- helpers --------------------------------------------------------------
 
