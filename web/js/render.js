@@ -79,8 +79,13 @@ export function initBoard(boardEl, vision) {
       inner.className = 'cell-inner';
       div.appendChild(inner);
 
+      // Move-preview "ghost path" dots layer
+      const preview = document.createElement('div');
+      preview.className = 'cell-preview';
+      div.appendChild(preview);
+
       gridEl.appendChild(div);
-      row.push({ div, canvas, ctx: canvas.getContext('2d'), inner });
+      row.push({ div, canvas, ctx: canvas.getContext('2d'), inner, preview });
     }
     cells.push(row);
   }
@@ -115,6 +120,7 @@ function inCircle(dr, dc, vision) {
 export function updateBoard(board, gmap, dying = []) {
   if (!gmap) return;
   const { vision, animCells, cells, screenDim, gridEl, cellSize } = board;
+  clearPathPreview(board); // stale ghost-path dots are re-drawn by updatePathPreview
 
   // Camera: centroid of all alive heroes (integer tile coords)
   const heroes = gmap.entities.filter(e => e.alive && e.kind === HERO);
@@ -142,6 +148,9 @@ export function updateBoard(board, gmap, dying = []) {
       }
     }
   }
+
+  // Expose the visible set so the move-preview can clip dots to what's in sight.
+  board.visible = newVisible;
 
   // Update animation targets
   for (const key of newVisible) {
@@ -251,6 +260,32 @@ export function updateBoard(board, gmap, dying = []) {
         board.boundaryLabels.push(lbl);
       }
     }
+  }
+}
+
+// --- move-preview ghost path -------------------------------------------------
+
+export function clearPathPreview(board) {
+  if (!board) return;
+  for (const row of board.cells) for (const cell of row) cell.preview.innerHTML = "";
+}
+
+// Draw the planned-path dots. `dots` is a list of { wr, wc, color, last } in tick
+// order; each becomes a small circle in its cell, clipped to the visible set and
+// the on-screen window. Multiple dots on a tile stack (the cell wraps them).
+export function renderPathPreview(board, dots) {
+  clearPathPreview(board);
+  if (!board || !board.visible || !dots || !dots.length) return;
+  const { vision, screenDim, cells, heroRow, heroCol, visible } = board;
+  for (const d of dots) {
+    if (!visible.has(`${d.wr},${d.wc}`)) continue;          // can't plan past your sight
+    const si = vision + (d.wr - heroRow);
+    const sj = vision + (d.wc - heroCol);
+    if (si < 0 || si >= screenDim || sj < 0 || sj >= screenDim) continue;
+    const dot = document.createElement("span");
+    dot.className = d.last ? "path-dot path-dot-end" : "path-dot";
+    dot.style.background = d.color;
+    cells[si][sj].preview.appendChild(dot);
   }
 }
 

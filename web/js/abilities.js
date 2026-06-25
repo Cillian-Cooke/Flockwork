@@ -31,7 +31,7 @@ export const ABILITIES = {
   // same move tape from here on — the swarm. The headline ability, so it's the
   // priciest (3 actions).
   duplicate: {
-    name: "Duplicate", glyph: "👥", directional: true, cost: 3,
+    name: "Duplicate", glyph: "👥", directional: true, cost: 3, color: "#ef4444",
     desc: "Spawn a copy of the hero one tile in the chosen direction. Every copy runs the same moves — build a swarm. Costs 3 actions.",
     run(engine, hero, dir) {
       if (!isDir(dir)) return;
@@ -49,7 +49,7 @@ export const ABILITIES = {
   // Drag the first entity in line one tile TOWARD you (reverse push). Reposition
   // a sheep you can't get behind; can pull one into a hazard beside you.
   hook: {
-    name: "Hook", glyph: "🪝", directional: true, cost: 2,
+    name: "Hook", glyph: "🪝", directional: true, cost: 2, color: "#f59e0b",
     desc: "Drag the first entity in that direction one tile toward you. The cheap, precise repositioning tool. Costs 2 actions.",
     run(engine, hero, dir) {
       if (!isDir(dir)) return;
@@ -76,7 +76,7 @@ export const ABILITIES = {
   // Barrel forward until blocked, shoving whatever you hit (cascades down the
   // hierarchy). Moves the hero. Dies if it ploughs into a lethal enemy.
   charge: {
-    name: "Charge", glyph: "💨", directional: true, cost: 2,
+    name: "Charge", glyph: "💨", directional: true, cost: 2, color: "#a855f7",
     desc: "Barrel in that direction until blocked, shoving whatever you hit. Moves the hero. Costs 2 actions.",
     run(engine, hero, dir) {
       if (!isDir(dir)) return;
@@ -102,7 +102,7 @@ export const ABILITIES = {
   // Shepherd's whistle: shift the WHOLE flock one tile in `dir`, free of their
   // script this tick. Sheep that land on a hazard die. Pure herding.
   whistle: {
-    name: "Whistle", glyph: "📣", directional: true, cost: 2,
+    name: "Whistle", glyph: "📣", directional: true, cost: 2, color: "#10b981",
     desc: "Call the whole flock one tile in that direction (ignores their script this tick). Costs 2 actions.",
     run(engine, hero, dir) {
       if (!isDir(dir)) return;
@@ -124,7 +124,7 @@ export const ABILITIES = {
   // Leap two tiles in `dir`, clearing whatever's between. Lands only on a free,
   // passable tile. Great for crossing gaps or hopping a blocker.
   blink: {
-    name: "Blink", glyph: "✨", directional: true, cost: 2,
+    name: "Blink", glyph: "✨", directional: true, cost: 2, color: "#06b6d4",
     desc: "Leap two tiles in that direction, over whatever's between. Lands on open ground. Costs 2 actions.",
     run(engine, hero, dir) {
       if (!isDir(dir)) return;
@@ -141,7 +141,7 @@ export const ABILITIES = {
   // Invincible for the next stretch: survive enemy contact and hazards. Lets you
   // walk a guard's lane or cross lava once.
   shield: {
-    name: "Invincible", glyph: "🛡️", directional: false, cost: 1,
+    name: "Invincible", glyph: "🛡️", directional: false, cost: 1, color: "#eab308",
     desc: "Become invincible for your next action — walk through a guard once. Fires instantly (1 action).",
     run(engine, hero) { hero.invuln = Math.max(hero.invuln, 2); },
   },
@@ -149,7 +149,7 @@ export const ABILITIES = {
   // Freeze every enemy: they skip their next move. Buys a beat to slip past a
   // patrol or wait out a trap.
   freeze: {
-    name: "Freeze", glyph: "❄️", directional: false, cost: 2,
+    name: "Freeze", glyph: "❄️", directional: false, cost: 2, color: "#6366f1",
     desc: "Freeze every enemy — they skip their next move. Costs 2 actions.",
     run(engine, hero) {
       for (const e of engine.gmap.entities) {

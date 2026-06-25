@@ -7,7 +7,7 @@
 import { buildGameMap, LEVEL } from "./mapdata.js";
 import { Engine } from "./engine.js";
 import { ROUND_LENGTH, ALL_TOKENS } from "./tokens.js";
-import { ENEMY, SHEEP } from "./entity.js";
+import { HERO, ENEMY, SHEEP } from "./entity.js";
 
 export class InputError extends Error {}
 
@@ -111,6 +111,35 @@ export function simulateTo(roundMoves, currentMoves, tick) {
 function finalize(gmap, engine, completedSets, res, log) {
   const score = scoreStr(completedSets, res.stoppedAt);
   return { gmap, engine, completedSets, status: res.status, score, log };
+}
+
+// Step the current round's queued moves once (no looping) from the round-start
+// state, recording every alive hero's position after each tick. Used to draw the
+// move-preview "ghost path". Stops early on win/lose. Returns { frames, status }
+// where each frame is { heroes: [[r,c], …], status } for one queued action.
+export function tracePath(roundMoves, currentMoves) {
+  const gmap = buildGameMap(activeLevel);
+  const engine = new Engine(gmap);
+
+  // Replay banked rounds to reach the current round's start.
+  for (const moves of roundMoves) {
+    const res = runRound(engine, gmap, moves, ROUND_LENGTH, []);
+    if (res.status !== "playing") return { frames: [], status: res.status };
+  }
+
+  const frames = [];
+  engine.tick = 0; // the current round runs from tick 0 (matches runRound)
+  let status = "playing";
+  for (let t = 0; t < currentMoves.length; t++) {
+    engine.step(currentMoves[t]);
+    const heroes = gmap.entities
+      .filter((e) => e.alive && e.kind === HERO)
+      .map((e) => [e.row, e.col]);
+    status = statusOf(gmap);
+    frames.push({ heroes, status });
+    if (status !== "playing") break;
+  }
+  return { frames, status };
 }
 
 // Per-entity loop summary for the "enemy & sheep loops" display.

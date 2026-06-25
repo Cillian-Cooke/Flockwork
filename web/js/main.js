@@ -1,8 +1,8 @@
 // UI wiring: controls → hotbar, global timeline, chat log, save/load/download.
 
-import { simulateTo, parseMoves, setActiveLevel, getActiveLevel } from "./game.js";
+import { simulateTo, parseMoves, setActiveLevel, getActiveLevel, tracePath } from "./game.js";
 import { buildGameMap, MapError } from "./mapdata.js";
-import { initBoard, updateBoard, startRafLoop, buildInitialLog, buildTickEntries } from "./render.js";
+import { initBoard, updateBoard, startRafLoop, buildInitialLog, buildTickEntries, renderPathPreview, clearPathPreview } from "./render.js";
 import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf, isMoveToken, AIM_TOKEN, LOCK_TOKEN } from "./tokens.js";
 import { describeTerrain, effectOf, DIE } from "./terrain.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
@@ -139,7 +139,42 @@ function showState(pos) {
   mapMetaEl.textContent = `R${roundNum} · T${tickNum}`;
 
   checkGameStatus(snap);
+  if (board) updatePathPreview();
   return snap;
+}
+
+// --- move-preview ghost path ----------------------------------------------
+
+const COLOR_MOVE = "#3b82f6"; // blue
+const COLOR_WAIT = "#9ca3af"; // grey (wait / forced lock)
+
+// Colour for the dot at queued tick `i` (token `tok`), using the ability roles.
+function colorForTick(i, tok, info) {
+  const role = info.role.get(i);
+  if (role === "cast" || role === "fire" || role === "aim") {
+    const ab = ABILITIES[info.abil.get(i)];
+    return (ab && ab.color) || COLOR_MOVE;
+  }
+  if (role === "lock") return COLOR_WAIT;
+  return classify(tok)[0] === "move" ? COLOR_MOVE : COLOR_WAIT;
+}
+
+// Trace the queued moves and drop a coloured dot at every hero position per tick,
+// but only while planning (board at the current round's start, not playing).
+function updatePathPreview() {
+  const base = roundMoves.length * ROUND_LENGTH;
+  const planning = !playing && !playingThrough && globalPos === base && currentMoves.length > 0;
+  if (!planning) { clearPathPreview(board); return; }
+
+  const { frames } = tracePath(roundMoves, currentMoves);
+  const info = annotateAbilities(currentMoves);
+  const dots = [];
+  frames.forEach((frame, t) => {
+    const color = colorForTick(t, currentMoves[t], info);
+    const last = t === frames.length - 1;
+    for (const [r, c] of frame.heroes) dots.push({ wr: r, wc: c, color, last });
+  });
+  renderPathPreview(board, dots);
 }
 
 // Full render: show the state AND rebuild + recentre the timeline. Used for
@@ -279,17 +314,26 @@ function tokenGlyph(token) {
 function annotateAbilities(tokens) {
   const role = new Map();
   const cost = new Map();
-  let armed = false;
+  const abil = new Map(); // index -> ability id (for cast / aim / fire ticks)
+  let armedId = null;
   tokens.forEach((tok, i) => {
     const slot = abilitySlotOf(tok);
-    const ab = slot >= 0 ? ABILITIES[currentAbilities[slot]] : null;
-    if (ab) { role.set(i, "cast"); cost.set(i, ab.cost); armed = ab.directional; }
-    else if (tok === AIM_TOKEN) { role.set(i, "aim"); }       // armed stays — still needs a direction
-    else if (tok === LOCK_TOKEN) { role.set(i, "lock"); }
-    else if (armed && isMoveToken(tok)) { role.set(i, "fire"); armed = false; }
-    else { armed = false; }
+    const id = slot >= 0 ? currentAbilities[slot] : null;
+    const ab = id ? ABILITIES[id] : null;
+    if (ab) {
+      role.set(i, "cast"); cost.set(i, ab.cost); abil.set(i, id);
+      armedId = ab.directional ? id : null;
+    } else if (tok === AIM_TOKEN) {                            // still needs a direction
+      role.set(i, "aim"); if (armedId) abil.set(i, armedId);
+    } else if (tok === LOCK_TOKEN) {
+      role.set(i, "lock");
+    } else if (armedId && isMoveToken(tok)) {
+      role.set(i, "fire"); abil.set(i, armedId); armedId = null;
+    } else {
+      armedId = null;
+    }
   });
-  return { role, cost };
+  return { role, cost, abil };
 }
 
 // A non-draggable tile role (ability blocks shouldn't be reordered piecemeal).
