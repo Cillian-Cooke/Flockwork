@@ -127,6 +127,11 @@ export function tracePath(roundMoves, currentMoves) {
     if (res.status !== "playing") return { frames: [], status: res.status };
   }
 
+  // The preview deliberately ignores enemies — their movement and even presence
+  // are for the player to reason about, not the planning dots. Drop them so they
+  // can't block, move, or kill the hero in the trace (sheep/terrain still count).
+  for (const e of gmap.entities) if (e.kind === ENEMY) e.alive = false;
+
   const frames = [];
   engine.tick = 0; // the current round runs from tick 0 (matches runRound)
   let status = "playing";

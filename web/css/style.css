@@ -235,12 +235,6 @@ body {
   min-width: 4px;
   min-height: 4px;
   border-radius: 50%;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7);
-  opacity: 0.92;
-}
-.path-dot-end {
-  outline: 1.5px solid rgba(0, 0, 0, 0.45);
-  box-shadow: 0 0 0 1.5px #fff;
 }
 
 /* Boundary index labels — positioned outside the grid, same style as original */
