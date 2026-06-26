@@ -39,11 +39,19 @@ function makeIdxLabel(text, styles) {
 }
 
 // Build a persistent grid sized to the map (rows×cols) so there's no void
-// padding around it — the board IS the map. Returns the `board` object used by
-// updateBoard and startRafLoop. Rebuild when the map's dimensions change.
-export function initBoard(boardEl, rows, cols, vision) {
+// padding around it. The grid is only as big as the hero's vision window
+// (2v+1), CLAMPED to the map — so a small map shows whole (no padding) and a
+// huge 100×100 map only ever builds ~(2v+1)² cells (cheap). The window scrolls
+// to follow the hero in updateBoard. Rebuild when the map dimensions change.
+export function initBoard(boardEl, mapRows, mapCols, vision) {
   boardEl.innerHTML = '';
   boardEl.style.transform = ''; // fresh map → reset any pinch-zoom/pan
+
+  // Rendered window = the hero's vision (2v+1) capped at radius 15 (31×31) and
+  // clamped to the map, so a huge 100×100 map still only builds ~31² cells.
+  const winDim = Math.min(2 * vision + 1, 31);
+  const rows = Math.min(winDim, mapRows);
+  const cols = Math.min(winDim, mapCols);
 
   const stage = boardEl.closest('.board-stage');
   const stageH = stage ? Math.max(stage.clientHeight, 120) : 400;
@@ -94,7 +102,11 @@ export function initBoard(boardEl, rows, cols, vision) {
 
   return {
     boardEl, gridEl, cells,
-    rows, cols, vision, cellSize,
+    rows, cols, mapRows, mapCols, vision, cellSize,
+    originRow:      0,           // world coord of the window's top-left cell
+    originCol:      0,
+    focusIdx:       0,           // which hero the window follows (creation order)
+    heroCount:      1,
     animCells:      new Map(),   // "wr,wc" → { progress:0..1, target:0|1 }
     boundaryLabels: [],          // index-label els appended to gridEl
     gmap:           null,
@@ -119,19 +131,25 @@ function inCircle(dr, dc, vision) {
 // Sync animation targets and cell overlays to the current game snapshot.
 export function updateBoard(board, gmap, dying = []) {
   if (!gmap) return;
-  const { vision, animCells, cells, rows, cols, gridEl, cellSize } = board;
+  const { vision, animCells, cells, rows, cols, mapRows, mapCols, gridEl, cellSize } = board;
   clearPathPreview(board); // stale ghost-path dots are re-drawn by updatePathPreview
 
-  // Camera: centroid of all alive heroes (integer tile coords)
+  // The window follows the FOCUS hero (lowest index by default; the player can
+  // cycle the focus on big maps). Heroes are in creation order, so [0] is lowest.
   const heroes = gmap.entities.filter(e => e.alive && e.kind === HERO);
-  let heroRow = 0, heroCol = 0;
-  if (heroes.length) {
-    heroRow = Math.round(heroes.reduce((s, h) => s + h.row, 0) / heroes.length);
-    heroCol = Math.round(heroes.reduce((s, h) => s + h.col, 0) / heroes.length);
-  }
-  board.heroRow = heroRow;
-  board.heroCol = heroCol;
+  board.heroCount = heroes.length;
+  const focus = heroes[Math.min(board.focusIdx || 0, Math.max(0, heroes.length - 1))]
+             || { row: 0, col: 0 };
+  board.heroRow = focus.row;
+  board.heroCol = focus.col;
   board.gmap    = gmap;
+
+  // Centre the window on the focus hero, clamped to the map so it never spills
+  // past an edge. originRow/Col is the world coord of cell (0,0).
+  const originRow = Math.max(0, Math.min(focus.row - (rows >> 1), mapRows - rows));
+  const originCol = Math.max(0, Math.min(focus.col - (cols >> 1), mapCols - cols));
+  board.originRow = originRow;
+  board.originCol = originCol;
 
   // Visible set: union of every alive hero's vision circle.
   // When a hero dies their tiles drop out here → animCells target→0 → fade.
@@ -166,22 +184,21 @@ export function updateBoard(board, gmap, dying = []) {
     if (!newVisible.has(key)) anim.target = 0;
   }
 
-  // Update entity overlays for each cell. The grid IS the map (origin 0,0), so
-  // screen (i,j) maps straight to world (i,j) — no hero-centred window, no void
-  // padding around the map.
+  // Update each cell from its world tile (window origin + screen offset). Tiles
+  // outside the hero's vision are FOGGED — terrain isn't revealed (dataset and
+  // tooltip get a sentinel) and no entity is shown.
   for (let i = 0; i < rows; i++) {
     for (let j = 0; j < cols; j++) {
-      const wr = i, wc = j;
+      const wr = originRow + i, wc = originCol + j;
       const cell = cells[i][j];
-      const inMap    = true;
       const inVision = newVisible.has(`${wr},${wc}`);
 
-      // World coords for tooltip lookups
       cell.div.dataset.worldR = wr;
       cell.div.dataset.worldC = wc;
-      cell.div.dataset.terrain = inMap ? gmap.terrain[wr][wc] : 0;
+      cell.div.dataset.terrain = inVision ? gmap.terrain[wr][wc] : "?"; // "?" = unseen
+      cell.div.classList.toggle('fog', !inVision);
 
-      // Entity overlay
+      // Entity overlay (only what you can see)
       cell.div.classList.remove('ent-hero', 'ent-enemy', 'ent-sheep', 'blocked', 'barrier', 'charging');
       delete cell.div.dataset.entity;
       cell.inner.textContent = '';
@@ -204,7 +221,7 @@ export function updateBoard(board, gmap, dying = []) {
   // Death beat: draw entities that just fell into lava/void on the hazard tile
   // for one frame (they vanish next frame) so the cause of death is visible.
   for (const d of dying) {
-    const si = d.row, sj = d.col;
+    const si = d.row - originRow, sj = d.col - originCol;
     if (si < 0 || si >= rows || sj < 0 || sj >= cols) continue;
     const cell = cells[si][sj];
     cell.inner.textContent = d.letter;
@@ -218,7 +235,7 @@ export function updateBoard(board, gmap, dying = []) {
 
   for (let i = 0; i < rows; i++) {
     for (let j = 0; j < cols; j++) {
-      const wr = i, wc = j;
+      const wr = originRow + i, wc = originCol + j;
       if (!newVisible.has(`${wr},${wc}`)) continue;
       const cs = cellSize;
 
@@ -275,10 +292,10 @@ export function clearPathPreview(board) {
 export function renderPathPreview(board, dots) {
   clearPathPreview(board);
   if (!board || !board.visible || !dots || !dots.length) return;
-  const { rows, cols, cells, visible } = board;
+  const { rows, cols, cells, visible, originRow, originCol } = board;
   for (const d of dots) {
     if (!visible.has(`${d.wr},${d.wc}`)) continue;          // can't plan past your sight
-    const si = d.wr, sj = d.wc;
+    const si = d.wr - originRow, sj = d.wc - originCol;
     if (si < 0 || si >= rows || sj < 0 || sj >= cols) continue;
     const dot = document.createElement("span");
     dot.className = d.last ? "path-dot path-dot-end" : "path-dot";
@@ -298,7 +315,7 @@ export function startRafLoop(board) {
     const dt = lastTs ? Math.min((ts - lastTs) / 1000, 0.05) : 0;
     lastTs = ts;
 
-    const { cells, rows, cols, animCells, gmap, filmstrips } = board;
+    const { cells, rows, cols, animCells, gmap, filmstrips, originRow, originCol } = board;
 
     // Clear all cell canvases first
     for (let i = 0; i < rows; i++) {
@@ -325,11 +342,11 @@ export function startRafLoop(board) {
         continue;
       }
 
-      // The grid is the map (origin 0,0), so the world tile is its own cell.
+      // Map the world tile into the current window (origin + screen offset).
       const commaIdx = key.indexOf(',');
       const wr = Number(key.slice(0, commaIdx));
       const wc = Number(key.slice(commaIdx + 1));
-      const si = wr, sj = wc;
+      const si = wr - originRow, sj = wc - originCol;
       if (si < 0 || si >= rows || sj < 0 || sj >= cols) continue;
 
       const terrainId = gmap.terrain[wr][wc];

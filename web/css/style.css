@@ -157,7 +157,39 @@ body {
   justify-content: center;
   align-items: center;
   overflow: visible;
+  position: relative;
 }
+
+/* Board navigation (recentre / switch hero) — floats top-right over the board,
+   only shown when the map is bigger than the view. */
+.board-nav {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  gap: 6px;
+}
+.board-nav[hidden] { display: none; }
+.board-nav-btn {
+  background: var(--panel);
+  border: 1.5px solid var(--line);
+  border-radius: 9px;
+  min-width: 38px;
+  height: 34px;
+  padding: 0 9px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.board-nav-btn:hover { background: #f8f5f0; border-color: var(--accent); }
+.board-nav-btn:active { transform: translateY(1px); }
+.board-nav-btn[hidden] { display: none; }
 
 .board-stage {
   width: 100%;
@@ -192,6 +224,10 @@ body {
   position: relative;
   overflow: visible;         /* allow idx labels to float outside grid */
 }
+
+/* Fog: tiles inside the window but beyond the hero's vision — they are nothing:
+   void-blank, and inert (can't be hovered/tapped to inspect). */
+.cell.fog { background: transparent; pointer-events: none; }
 
 /* Rive tile canvas — absolute, fills the cell, drawn by rAF loop */
 .tile-canvas {

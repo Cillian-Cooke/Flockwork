@@ -151,14 +151,14 @@ function showState(pos) {
     renderHotbar();
   }
 
-  if (board) { updateBoard(board, snap.gmap); followHero(board); }
+  if (board) updateBoard(board, snap.gmap);
 
   const roundNum = Math.floor(pos / ROUND_LENGTH) + 1;
   const tickNum  = pos % ROUND_LENGTH;
   mapMetaEl.textContent = `R${roundNum} · T${tickNum}`;
 
   checkGameStatus(snap);
-  if (board) updatePathPreview();
+  if (board) { updatePathPreview(); updateBoardNav(); }
   updateInteractButton(snap);
   return snap;
 }
@@ -872,11 +872,11 @@ function loadLevelData(data, sourceName = "custom map", dailyCtx = null) {
   currentAbilities = heroEnt ? normalizeLoadout(heroEnt.abilities) : normalizeLoadout([]);
   updateAbilityButtons();
 
-  // Rebuild the board if the map's dimensions (or vision) changed — the grid is
-  // sized to the map, so each new shape needs a fresh grid.
+  // Rebuild the board if the map's dimensions (or vision) changed — the render
+  // window is derived from them, so a new shape needs a fresh grid.
   const rows = data.grid.length, cols = data.grid[0].length;
   const newVision = parseInt(data.vision || 5, 10);
-  if (!board || board.rows !== rows || board.cols !== cols || board.vision !== newVision) {
+  if (!board || board.mapRows !== rows || board.mapCols !== cols || board.vision !== newVision) {
     if (board) board.stopped = true;
     board = initBoard(boardEl, rows, cols, newVision);
     board.filmstrips = filmstrips;
@@ -944,12 +944,13 @@ timelineDotsEl.addEventListener("scroll", () => {
 
 window.addEventListener("resize", () => {
   if (board) {
-    const { rows, cols, vision } = board;
+    const { mapRows, mapCols, vision, focusIdx } = board;
     board.stopped = true;
-    board = initBoard(boardEl, rows, cols, vision);
+    board = initBoard(boardEl, mapRows, mapCols, vision);
+    board.focusIdx = focusIdx;
     board.filmstrips = filmstrips;
     if (filmstrips) startRafLoop(board);
-    if (lastSnapshot) { updateBoard(board, lastSnapshot.gmap); followHero(board); }
+    if (lastSnapshot) updateBoard(board, lastSnapshot.gmap);
   }
   centerCurrentDot(false);
 });
@@ -1372,6 +1373,8 @@ function describeEntity(e) {
 // Shared by the desktop hover tooltip and the mobile tap popup.
 function cellInfoHTML(cell) {
   if (!lastSnapshot) return null;
+  // Beyond the hero's sight = nothing. Reveal neither terrain nor entities.
+  if (cell.classList.contains("fog") || cell.dataset.terrain === "?") return null;
   const r = Number(cell.dataset.worldR ?? cell.dataset.r);
   const c = Number(cell.dataset.worldC ?? cell.dataset.c);
   const ent = entityAt(lastSnapshot.gmap, r, c);
@@ -1416,7 +1419,7 @@ cellPopupOverlay.addEventListener("click", e => {
   if (e.target === cellPopupOverlay) hideCellPopup();
 });
 
-const CAM_MIN_SCALE = 1;
+const CAM_MIN_SCALE = 0.35; // allow zooming out to see more of a big map's window
 const CAM_MAX_SCALE = 4;
 const TAP_MOVE_THRESHOLD = 8; // px — beyond this a touch is a pan, not a tap
 
@@ -1425,6 +1428,38 @@ function applyCam(b) {
   const { scale, x, y } = b.cam;
   b.boardEl.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
 }
+
+// --- board navigation (recentre / switch hero) ----------------------------
+
+const boardNav   = document.getElementById("board-nav");
+const navRecenter = document.getElementById("nav-recenter");
+const navHero    = document.getElementById("nav-hero");
+
+// Reset any manual pan/zoom so the window re-centres on the focus hero.
+function recenterBoard() {
+  if (!board) return;
+  board.cam = { scale: 1, x: 0, y: 0 };
+  applyCam(board);
+}
+
+// Show the nav only when the map is bigger than the rendered window (the player
+// could get lost / want to switch heroes). The hero button only when >1 hero.
+function updateBoardNav() {
+  if (!board || !boardNav) return;
+  const bigger = board.mapRows > board.rows || board.mapCols > board.cols;
+  boardNav.hidden = !bigger;
+  const multi = board.heroCount > 1;
+  navHero.hidden = !multi;
+  if (multi) navHero.textContent = `👥 ${(board.focusIdx % board.heroCount) + 1}/${board.heroCount}`;
+}
+
+if (navRecenter) navRecenter.addEventListener("click", recenterBoard);
+if (navHero) navHero.addEventListener("click", () => {
+  if (!board || board.heroCount < 2) return;
+  board.focusIdx = (board.focusIdx + 1) % board.heroCount;
+  recenterBoard();          // drop manual pan so the new hero is centred
+  showState(globalPos);     // re-render the window around the new focus hero
+});
 
 // Keep the (possibly zoomed) board from panning entirely out of view.
 function clampCam(b) {
@@ -1438,18 +1473,6 @@ function clampCam(b) {
   b.cam.y = Math.max(-maxY, Math.min(maxY, b.cam.y));
 }
 
-// Centre the viewport on the hero centroid (the grid is centred by the stage, so
-// translate by the hero's offset from the board centre). Clamped to the map, so a
-// map that fits stays fully shown and a bigger one pans to follow the hero.
-function followHero(b) {
-  if (!b || !b.cols) return;
-  const offX = (b.heroCol + 0.5 - b.cols / 2) * b.cellSize;
-  const offY = (b.heroRow + 0.5 - b.rows / 2) * b.cellSize;
-  b.cam.x = -offX * b.cam.scale;
-  b.cam.y = -offY * b.cam.scale;
-  clampCam(b);
-  applyCam(b);
-}
 
 const touchPoints   = new Map(); // pointerId -> {x,y}
 let touchGestureMoved = false;
