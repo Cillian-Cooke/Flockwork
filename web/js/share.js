@@ -50,12 +50,24 @@ function aliveAt(gmap, r, c) {
   return null;
 }
 
-// The board (terrain + starting entities) as a multi-line emoji grid.
+// The board (terrain + starting entities) as a multi-line emoji grid. Big maps
+// are cropped to a 10×10 window centred on the hero so the share never balloons
+// past what WhatsApp/iMessage lay out cleanly (10 emoji wide). Small maps (the
+// usual case) are shown whole.
+const SHARE_MAX = 10;
 export function mapToEmoji(gmap) {
+  const cropH = Math.min(gmap.rows, SHARE_MAX);
+  const cropW = Math.min(gmap.cols, SHARE_MAX);
+  const hero = gmap.entities.find((e) => e.alive && e.kind === HERO);
+  const cr = hero ? hero.row : gmap.rows >> 1;
+  const cc = hero ? hero.col : gmap.cols >> 1;
+  const r0 = Math.max(0, Math.min(cr - (cropH >> 1), gmap.rows - cropH));
+  const c0 = Math.max(0, Math.min(cc - (cropW >> 1), gmap.cols - cropW));
+
   const rows = [];
-  for (let r = 0; r < gmap.rows; r++) {
+  for (let r = r0; r < r0 + cropH; r++) {
     let line = "";
-    for (let c = 0; c < gmap.cols; c++) {
+    for (let c = c0; c < c0 + cropW; c++) {
       const ent = aliveAt(gmap, r, c);
       line += ent ? entityEmoji(ent) : terrainEmoji(gmap.terrain[r][c]);
     }
