@@ -25,6 +25,7 @@ export const CRACK = "crack";        // collapses to void after N traversals
 export const PLATE = "plate";        // a pressure plate — holds the gates open
 export const GATE = "gate";          // wall until any plate is pressed
 export const ONEWAY = "oneway";      // enterable only from one direction
+export const GRANT = "grant";        // ability terrain — collect abilities when ending a turn here
 
 export const VOID = 0;
 
@@ -55,6 +56,7 @@ export const DEFAULT_REGISTRY = {
   23: ONEWAY,     // one-way, enter moving left
   24: PLATE,      // pressure plate
   25: GATE,       // gate (closed wall until a plate is pressed)
+  26: GRANT,      // ability terrain (holds abilities — see the map's `grants` field)
   // 91-99: cracking tiles, durability = id - 90 (see crackUses)
 };
 
@@ -101,6 +103,7 @@ export const EFFECT_INFO = {
   [PLATE]:       { name: "Plate",     desc: "A pressure plate. While something stands on it, every gate is held open." },
   [GATE]:        { name: "Gate",      desc: "A wall that opens only while a pressure plate is pressed." },
   [ONEWAY]:      { name: "One-way",   desc: "Can only be entered from one direction." },
+  [GRANT]:       { name: "Ability Cache", desc: "Holds abilities. End your turn here, then tap the Interact button to choose what to take or swap." },
 };
 
 export function effectOf(terrainId, registry = DEFAULT_REGISTRY) {

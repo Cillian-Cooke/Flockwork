@@ -8,6 +8,7 @@ import { buildGameMap, LEVEL } from "./mapdata.js";
 import { Engine } from "./engine.js";
 import { ROUND_LENGTH, ALL_TOKENS } from "./tokens.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
+import { normalizeLoadout } from "./abilities.js";
 
 export class InputError extends Error {}
 
@@ -21,6 +22,62 @@ export function setActiveLevel(data) {
 
 export function getActiveLevel() {
   return activeLevel;
+}
+
+// --- ability pickups (ability terrain) -------------------------------------
+//
+// A hero's loadout NEVER changes on its own. Ending a turn on ability terrain
+// (`gmap.grants`) lights the Interact button; the player opens the popup and
+// chooses what to take/swap. That choice is recorded as a "swap" so it persists
+// and the timeline stays deterministic across re-simulation.
+//
+// `activeSwaps` is keyed by the number of completed rounds at the moment of the
+// swap → the chosen length-3 loadout.
+let activeSwaps = {};
+
+export function setSwaps(swaps) {
+  activeSwaps = swaps || {};
+}
+
+export function getSwaps() {
+  return activeSwaps;
+}
+
+// The hero's loadout as built from the map (boundary 0).
+function heroLoadout(gmap) {
+  const h = gmap.entities.find((e) => e.kind === HERO);
+  return normalizeLoadout(h ? h.abilities : []);
+}
+
+// Stamp `loadout` onto every alive hero (the swarm shares one loadout).
+function applyLoadout(gmap, loadout) {
+  for (const e of gmap.entities) {
+    if (e.alive && e.kind === HERO) e.abilities = loadout.slice();
+  }
+}
+
+// The loadout entering round index `b` (after `b` rounds have completed): an
+// explicit player swap if one was recorded at this boundary, else unchanged.
+// Pickups are never automatic — the loadout only moves when the player confirms.
+function loadoutAtBoundary(b, loadout, _gmap) {
+  if (activeSwaps[b]) return normalizeLoadout(activeSwaps[b]);
+  return loadout;
+}
+
+// "A hero just ended a turn on ability terrain holding something it doesn't own"
+// — lights the Interact button so the player can open the swap popup. Returns
+// the tile's abilities and the current loadout, or null.
+export function pendingSwapInfo(gmap, loadout) {
+  for (const e of gmap.entities) {
+    if (!e.alive || e.kind !== HERO) continue;
+    const tile = gmap.grantAt(e.row, e.col);
+    if (!tile) continue;
+    const owned = new Set(loadout.filter(Boolean));
+    const lacked = tile.filter((id) => !owned.has(id));
+    if (!lacked.length) continue; // hero already owns everything here
+    return { tileAbilities: tile.slice(), loadout: loadout.slice(), hero: [e.row, e.col] };
+  }
+  return null;
 }
 
 // Parse packed or space-separated tokens into a validated list (>= 1).
@@ -83,19 +140,25 @@ export function simulateTo(roundMoves, currentMoves, tick) {
   const log = [];
   let completedSets = 0;
   let status = "playing";
+  let loadout = heroLoadout(gmap); // boundary 0 == the map's loadout
 
   // Banked rounds always survived (they wouldn't have been banked otherwise),
-  // so each runs a full round. Guard against win/lose just in case.
+  // so each runs a full round. Guard against win/lose just in case. The hero's
+  // loadout is re-derived at every boundary (ability-terrain pickups + swaps).
   for (const moves of roundMoves) {
+    applyLoadout(gmap, loadout);
     log.push(`-- round ${completedSets + 1} (banked) --`);
     const res = runRound(engine, gmap, moves, ROUND_LENGTH, log);
     if (res.status !== "playing") {
-      return finalize(gmap, engine, completedSets, res, log);
+      return finalize(gmap, engine, completedSets, res, log, loadout);
     }
     completedSets += 1;
+    loadout = loadoutAtBoundary(completedSets, loadout, gmap);
   }
 
-  // Current (in-progress) round, advanced to `tick`.
+  // Reflect the current loadout on the board (for codex/tooltips) and play the
+  // in-progress round with it.
+  applyLoadout(gmap, loadout);
   let stoppedAt = 0;
   if (currentMoves && currentMoves.length && tick > 0) {
     log.push(`-- round ${completedSets + 1} (current) --`);
@@ -105,12 +168,12 @@ export function simulateTo(roundMoves, currentMoves, tick) {
   }
 
   const score = scoreStr(completedSets, stoppedAt);
-  return { gmap, engine, completedSets, status, score, log };
+  return { gmap, engine, completedSets, status, score, log, loadout };
 }
 
-function finalize(gmap, engine, completedSets, res, log) {
+function finalize(gmap, engine, completedSets, res, log, loadout) {
   const score = scoreStr(completedSets, res.stoppedAt);
-  return { gmap, engine, completedSets, status: res.status, score, log };
+  return { gmap, engine, completedSets, status: res.status, score, log, loadout };
 }
 
 // Step the current round's queued moves once (no looping) from the round-start
@@ -121,11 +184,18 @@ export function tracePath(roundMoves, currentMoves) {
   const gmap = buildGameMap(activeLevel);
   const engine = new Engine(gmap);
 
-  // Replay banked rounds to reach the current round's start.
+  // Replay banked rounds to reach the current round's start, threading the same
+  // loadout transitions so ability tokens in the trace fire correctly.
+  let loadout = heroLoadout(gmap);
+  let completed = 0;
   for (const moves of roundMoves) {
+    applyLoadout(gmap, loadout);
     const res = runRound(engine, gmap, moves, ROUND_LENGTH, []);
     if (res.status !== "playing") return { frames: [], status: res.status };
+    completed += 1;
+    loadout = loadoutAtBoundary(completed, loadout, gmap);
   }
+  applyLoadout(gmap, loadout);
 
   // The preview deliberately ignores enemies — their movement and even presence
   // are for the player to reason about, not the planning dots. Drop them so they

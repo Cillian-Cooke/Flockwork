@@ -82,13 +82,17 @@
         </div>
       </div>
 
-      <!-- Center column: Play / Clear -->
+      <!-- Center column: Play / Clear / Interact -->
       <div class="center-column">
         <button id="play" class="diamond-btn play-diamond" title="Play round (Enter)">
           <span>▶</span>
         </button>
         <button id="clear" class="diamond-btn clear-diamond" title="Clear all queued moves (Backspace)">
           <span>✕</span>
+        </button>
+        <button id="interact" class="diamond-btn interact-diamond" disabled
+                title="Interact with tile — end a turn on an ability cache to swap abilities">
+          <span>🤝</span>
         </button>
       </div>
 
@@ -115,6 +119,23 @@
     <div class="cell-popup">
       <button class="cell-popup-close" id="cell-popup-close" aria-label="close">×</button>
       <div id="cell-popup-body"></div>
+    </div>
+  </div>
+
+  <!-- Ability cache swap popup -->
+  <div id="ability-swap-overlay" class="swap-overlay" hidden>
+    <div class="swap-card" role="dialog" aria-modal="true" aria-label="Ability cache">
+      <button class="swap-close" id="swap-close" aria-label="close">×</button>
+      <h2 class="swap-title">🤝 Ability Cache</h2>
+      <p class="swap-hint">Drag abilities between the cache and your slots. Drop onto a full slot to swap — the old one goes back to the cache.</p>
+      <div class="swap-section-label">In this tile</div>
+      <div class="swap-pool" id="swap-pool"></div>
+      <div class="swap-section-label">Your abilities</div>
+      <div class="swap-slots" id="swap-slots"></div>
+      <div class="swap-actions">
+        <button class="swap-btn swap-confirm" id="swap-confirm">Confirm</button>
+        <button class="swap-btn swap-ghost" id="swap-cancel">Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -156,10 +177,13 @@
           <code>"0"</code> void (fall = die) · <code>"1"</code> grass · <code>"2"</code> wall ·
           <code>"1A"</code> hero · <code>"1s"</code> sheep · <code>"1a"</code> enemy</li>
         <li><code>scripts</code> — loop of action tokens for each enemy / sheep</li>
+        <li><code>grants</code> <em>(optional)</em> — ability terrain. Set a cell to terrain
+          <code>26</code> and add <code>"row,col": ["hook","blink"]</code> (≤3 ids). End a turn
+          there, then tap the 🤝 Interact button to choose what to take or swap.</li>
         <li><code>rounds</code> <em>(save)</em> — array of completed round move arrays</li>
         <li><code>current</code> <em>(save)</em> — moves queued for the next round</li>
       </ul>
-      <p class="fmt-mini"><b>Terrain:</b> 0 void · 1 grass · 2 wall · 3 lava · 4 slip · 5 skip · 6 portal · 7 dup · 8 push · 9 repeat · 10 glide · 11 ward · 12 warp · 13 mirror · 14-100 grass</p>
+      <p class="fmt-mini"><b>Terrain:</b> 0 void · 1 grass · 2 wall · 3 lava · 4 slip · 5 skip · 6 portal · 7 dup · 8 push · 9 repeat · 10 glide · 11 ward · 12 warp · 13 mirror · 26 ability cache · 14-100 grass</p>
       <p class="fmt-mini"><b>Tokens:</b> move <code>w a s d</code> · attack <code>t f g h</code> · wait <code>.</code><br>
         <code>e</code> = instant ability · <code>r</code> = charge — arms on press, fires on whichever move key comes next
         (stays armed through waits/attacks in between)</p>

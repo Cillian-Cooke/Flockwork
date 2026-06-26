@@ -7,6 +7,7 @@
 
 import { Entity, kindOf, HERO, ENEMY, SHEEP } from "./entity.js";
 import { ALL_TOKENS } from "./tokens.js";
+import { ABILITIES, normalizeLoadout } from "./abilities.js";
 
 // Default loadout for a hero whose map doesn't specify abilities.
 const DEFAULT_ABILITIES = ["hook", "charge", "duplicate"];
@@ -32,13 +33,20 @@ const CELL_RE = /^(\d{1,3})([A-Za-z])?$/;
 export class MapError extends Error {}
 
 export class GameMap {
-  constructor({ name, vision, terrain, entities, rows, cols }) {
+  constructor({ name, vision, terrain, entities, rows, cols, grants }) {
     this.name = name;
     this.vision = vision;
     this.terrain = terrain;
     this.entities = entities;
     this.rows = rows;
     this.cols = cols;
+    // Ability terrain: Map "r,c" -> [ability id, …] (max 3, one of each).
+    this.grants = grants || new Map();
+  }
+
+  // The abilities cached on the tile at (r,c), or null if it isn't ability terrain.
+  grantAt(r, c) {
+    return this.grants.get(`${r},${c}`) || null;
   }
 
   sheepAlive() {
@@ -75,6 +83,37 @@ function validateScript(letter, script) {
     }
   }
   return script.slice();
+}
+
+// Parse the optional `grants` field — ability terrain contents keyed by "r,c".
+// Each entry is a list of up to 3 unique ability ids (validated against the
+// library). Returns a Map for fast per-tile lookup during play.
+function parseGrants(raw, rows, cols) {
+  const grants = new Map();
+  if (!raw) return grants;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new MapError("'grants' must be an object keyed by \"row,col\"");
+  }
+  for (const [key, ids] of Object.entries(raw)) {
+    const m = /^(\d+),(\d+)$/.exec(String(key).trim());
+    if (!m) throw new MapError(`grant key ${JSON.stringify(key)} must be "row,col"`);
+    const r = Number(m[1]), c = Number(m[2]);
+    if (r < 0 || r >= rows || c < 0 || c >= cols) {
+      throw new MapError(`grant tile ${key} is out of bounds`);
+    }
+    if (!Array.isArray(ids) || !ids.length) {
+      throw new MapError(`grant ${key} must be a non-empty list of ability ids`);
+    }
+    if (ids.length > 3) throw new MapError(`grant ${key} holds more than 3 abilities`);
+    const seen = new Set();
+    for (const id of ids) {
+      if (!ABILITIES[id]) throw new MapError(`grant ${key} has unknown ability ${JSON.stringify(id)}`);
+      if (seen.has(id)) throw new MapError(`grant ${key} repeats ability ${JSON.stringify(id)}`);
+      seen.add(id);
+    }
+    grants.set(`${r},${c}`, ids.slice());
+  }
+  return grants;
 }
 
 // Build a fresh GameMap from level data. Called once per (re-)simulation so each
@@ -125,7 +164,7 @@ export function buildGameMap(data = LEVEL) {
         lethalToSheep: m.lethalToSheep !== undefined ? m.lethalToSheep : false,
         heavy: !!m.heavy,
         toggle: m.toggle || null,
-        abilities: kind === HERO ? (m.abilities || DEFAULT_ABILITIES) : [],
+        abilities: kind === HERO ? normalizeLoadout(m.abilities || DEFAULT_ABILITIES) : [],
       }));
     });
     terrain.push(terrainRow);
@@ -145,5 +184,6 @@ export function buildGameMap(data = LEVEL) {
     entities,
     rows: grid.length,
     cols,
+    grants: parseGrants(data.grants, grid.length, cols),
   });
 }

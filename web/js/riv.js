@@ -28,6 +28,7 @@ export const TERRAIN_FALLBACK = {
   20: '#7fae7f', 21: '#7fae7f', 22: '#7fae7f', 23: '#7fae7f', // one-way
   24: '#f1c40f', // pressure plate
   25: '#4a4a55', // gate (closed)
+  26: '#6c5ce7', // ability cache (indigo — distinct from the gold pressure plate)
 };
 // Cracking tiles 91-99 — browner the fewer uses remain.
 for (let u = 1; u <= 9; u++) TERRAIN_FALLBACK[90 + u] = '#9c6b3f';

@@ -1,12 +1,12 @@
 // UI wiring: controls → hotbar, global timeline, chat log, save/load/download.
 
-import { simulateTo, parseMoves, setActiveLevel, getActiveLevel, tracePath } from "./game.js";
+import { simulateTo, parseMoves, setActiveLevel, getActiveLevel, tracePath, setSwaps, pendingSwapInfo } from "./game.js";
 import { buildGameMap, MapError } from "./mapdata.js";
 import { initBoard, updateBoard, startRafLoop, buildInitialLog, buildTickEntries, renderPathPreview, clearPathPreview } from "./render.js";
 import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf, isMoveToken, AIM_TOKEN, LOCK_TOKEN } from "./tokens.js";
 import { describeTerrain, effectOf, DIE } from "./terrain.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
-import { ABILITIES, lockAfter } from "./abilities.js";
+import { ABILITIES, lockAfter, normalizeLoadout, SLOTS } from "./abilities.js";
 import { initRiv, buildFilmstrips, playYouLose } from "./riv.js";
 import { buildShareText, computeScore } from "./share.js";
 
@@ -18,6 +18,8 @@ let currentAbilities = [];
 
 let roundMoves     = [];    // completed round move sequences (arrays of tokens)
 let currentMoves   = [];    // tokens queued for the current round
+let swaps          = {};    // ability-terrain swaps: completedRoundCount -> loadout[]
+let pendingSwap    = null;   // info for the lit Interact button (or null)
 let globalPos      = 0;     // current global tick position shown on timeline
 let maxGlobalPos   = 0;     // furthest position reached — timeline max
 let playing        = false;
@@ -52,6 +54,7 @@ const chatPopup      = document.getElementById("chat-popup");
 const chatToggle     = document.getElementById("chat-toggle");
 const chatClose      = document.getElementById("chat-close");
 const hotbarEl       = document.getElementById("hotbar");
+const interactBtn    = document.getElementById("interact");
 const timelineDotsEl = document.getElementById("timeline-dots");
 const tooltip        = document.getElementById("tooltip");
 const mapTitleEl     = document.getElementById("map-title");
@@ -97,6 +100,13 @@ function shortTitle(name, max = 20) {
 // Convert a global tick position to the right simulateTo arguments.
 // Completed rounds are replayed as "banked"; the target round as "current".
 function simulateToGlobal(pos) {
+  // The live planning frontier (start of the current round). Render it through
+  // the current-round path — running every banked round, then 0 ticks of the
+  // next — so the loadout reflects an ability swap recorded at THIS boundary
+  // immediately (replaying the previous round would show the pre-swap loadout).
+  const base = roundMoves.length * ROUND_LENGTH;
+  if (pos === base) return simulateTo(roundMoves, currentMoves, 0);
+
   const round = Math.floor(pos / ROUND_LENGTH);
   const tick  = pos % ROUND_LENGTH;
 
@@ -132,7 +142,16 @@ function showState(pos) {
   const snap = simulateToGlobal(pos);
   lastSnapshot = snap;
 
-  if (board) updateBoard(board, snap.gmap);
+  // Ability terrain can change the hero's loadout between rounds — keep the
+  // ability buttons + hotbar glyphs in sync with the simulated loadout.
+  const newLoadout = normalizeLoadout(snap.loadout || []);
+  if (newLoadout.join(",") !== currentAbilities.join(",")) {
+    currentAbilities = newLoadout;
+    updateAbilityButtons();
+    renderHotbar();
+  }
+
+  if (board) { updateBoard(board, snap.gmap); followHero(board); }
 
   const roundNum = Math.floor(pos / ROUND_LENGTH) + 1;
   const tickNum  = pos % ROUND_LENGTH;
@@ -140,7 +159,25 @@ function showState(pos) {
 
   checkGameStatus(snap);
   if (board) updatePathPreview();
+  updateInteractButton(snap);
   return snap;
+}
+
+// The Interact button lights at the live end-of-round frontier when a hero is
+// parked on ability terrain holding something it doesn't own. Nothing is ever
+// collected automatically — the player chooses in the popup. Queuing moves for
+// the NEXT round doesn't move the hero off the tile, so the button stays
+// available while you plan (no need to clear the hotbar first).
+function updateInteractButton(snap) {
+  const atFrontier = !playing && !playingThrough
+    && roundMoves.length >= 1
+    && globalPos === maxGlobalPos
+    && globalPos % ROUND_LENGTH === 0
+    && snap.status === "playing";
+  pendingSwap = atFrontier ? pendingSwapInfo(snap.gmap, normalizeLoadout(snap.loadout || [])) : null;
+  if (!interactBtn) return;
+  interactBtn.disabled = !pendingSwap;
+  interactBtn.classList.toggle("lit", !!pendingSwap);
 }
 
 // --- move-preview ghost path ----------------------------------------------
@@ -535,6 +572,9 @@ async function playRound() {
   renderHotbar();
   playing = false;
   setControlsDisabled(false);
+  // Re-render at the new boundary so the Interact button lights immediately when
+  // the hero has ended this round on an ability cache (no extra click needed).
+  renderGlobal(maxGlobalPos);
 }
 
 // Animate through all provided rounds + optional current moves.
@@ -578,13 +618,18 @@ function setControlsDisabled(disabled) {
 
 function buildSaveData() {
   const level = getActiveLevel();
-  return {
+  const data = {
     name:    level.name,
     grid:    level.grid,
     scripts: level.scripts,
     rounds:  roundMoves,
     current: currentMoves,
   };
+  // Ability terrain: carry the tile contents and the player's recorded swaps so
+  // a reloaded save replays the same loadout.
+  if (level.grants && Object.keys(level.grants).length) data.grants = level.grants;
+  if (Object.keys(swaps).length) data.swaps = swaps;
+  return data;
 }
 
 function downloadSave() {
@@ -722,8 +767,8 @@ async function playDailyDay(idx) {
       anim.speed  = 2.5;
     }
     // Clear entity glyphs so they don't float over the receding tiles
-    for (let i = 0; i < board.screenDim; i++) {
-      for (let j = 0; j < board.screenDim; j++) {
+    for (let i = 0; i < board.rows; i++) {
+      for (let j = 0; j < board.cols; j++) {
         const c = board.cells[i][j];
         c.div.classList.remove('ent-hero', 'ent-enemy', 'ent-sheep', 'blocked', 'barrier', 'charging');
         delete c.div.dataset.entity;
@@ -758,6 +803,8 @@ function initChatForMap() {
 function resetGame() {
   roundMoves    = [];
   currentMoves  = [];
+  swaps         = {};
+  setSwaps(swaps);
   globalPos     = 0;
   maxGlobalPos  = 0;
   loadedSave    = null;
@@ -816,16 +863,22 @@ function loadLevelData(data, sourceName = "custom map", dailyCtx = null) {
   setActiveLevel(data);
   mapTitleEl.textContent = shortTitle(data.name);
 
+  // Restore any recorded ability-terrain swaps (player choices) for this save.
+  swaps = (data.swaps && typeof data.swaps === "object") ? { ...data.swaps } : {};
+  setSwaps(swaps);
+
   // Read the hero's loadout so the ability buttons + tiles show the right icons.
   const heroEnt = buildGameMap(data).entities.find(e => e.kind === HERO);
-  currentAbilities = heroEnt ? heroEnt.abilities.slice(0, 3) : [];
+  currentAbilities = heroEnt ? normalizeLoadout(heroEnt.abilities) : normalizeLoadout([]);
   updateAbilityButtons();
 
-  // Rebuild board if vision radius changed between levels
+  // Rebuild the board if the map's dimensions (or vision) changed — the grid is
+  // sized to the map, so each new shape needs a fresh grid.
+  const rows = data.grid.length, cols = data.grid[0].length;
   const newVision = parseInt(data.vision || 5, 10);
-  if (board && board.vision !== newVision) {
-    board.stopped = true;
-    board = initBoard(boardEl, newVision);
+  if (!board || board.rows !== rows || board.cols !== cols || board.vision !== newVision) {
+    if (board) board.stopped = true;
+    board = initBoard(boardEl, rows, cols, newVision);
     board.filmstrips = filmstrips;
     if (filmstrips) startRafLoop(board);
   }
@@ -891,12 +944,12 @@ timelineDotsEl.addEventListener("scroll", () => {
 
 window.addEventListener("resize", () => {
   if (board) {
-    const vision = board.vision;
+    const { rows, cols, vision } = board;
     board.stopped = true;
-    board = initBoard(boardEl, vision);
+    board = initBoard(boardEl, rows, cols, vision);
     board.filmstrips = filmstrips;
     if (filmstrips) startRafLoop(board);
-    if (lastSnapshot) updateBoard(board, lastSnapshot.gmap);
+    if (lastSnapshot) { updateBoard(board, lastSnapshot.gmap); followHero(board); }
   }
   centerCurrentDot(false);
 });
@@ -1235,6 +1288,18 @@ function formatSaveJSON(data) {
 
   lines.push(`  "scripts": ${scriptStr},`);
 
+  // Ability terrain contents + recorded swaps (only when present).
+  if (data.grants && Object.keys(data.grants).length) {
+    const grantStr = '{ ' + Object.entries(data.grants)
+      .map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(', ') + ' }';
+    lines.push(`  "grants": ${grantStr},`);
+  }
+  if (data.swaps && Object.keys(data.swaps).length) {
+    const swapStr = '{ ' + Object.entries(data.swaps)
+      .map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(', ') + ' }';
+    lines.push(`  "swaps": ${swapStr},`);
+  }
+
   if (rounds.length === 0) {
     lines.push('  "rounds": [],');
   } else {
@@ -1365,11 +1430,25 @@ function applyCam(b) {
 function clampCam(b) {
   const stage = b.boardEl.closest(".board-stage");
   if (!stage) return;
-  const contentSize = b.screenDim * b.cellSize * b.cam.scale;
-  const maxX = Math.max(0, (contentSize - stage.clientWidth)  / 2);
-  const maxY = Math.max(0, (contentSize - stage.clientHeight) / 2);
+  const contentW = b.cols * b.cellSize * b.cam.scale;
+  const contentH = b.rows * b.cellSize * b.cam.scale;
+  const maxX = Math.max(0, (contentW - stage.clientWidth)  / 2);
+  const maxY = Math.max(0, (contentH - stage.clientHeight) / 2);
   b.cam.x = Math.max(-maxX, Math.min(maxX, b.cam.x));
   b.cam.y = Math.max(-maxY, Math.min(maxY, b.cam.y));
+}
+
+// Centre the viewport on the hero centroid (the grid is centred by the stage, so
+// translate by the hero's offset from the board centre). Clamped to the map, so a
+// map that fits stays fully shown and a bigger one pans to follow the hero.
+function followHero(b) {
+  if (!b || !b.cols) return;
+  const offX = (b.heroCol + 0.5 - b.cols / 2) * b.cellSize;
+  const offY = (b.heroRow + 0.5 - b.rows / 2) * b.cellSize;
+  b.cam.x = -offX * b.cam.scale;
+  b.cam.y = -offY * b.cam.scale;
+  clampCam(b);
+  applyCam(b);
 }
 
 const touchPoints   = new Map(); // pointerId -> {x,y}
@@ -1524,6 +1603,7 @@ const CODEX_TERRAIN_COLOR = {
   10:'#5ad0e0', 11:'#f0d878', 12:'#d83ad8', 13:'#ff5ab0',
   14:'#c0392b', 15:'#e67e22', 16:'#8a97b0', 17:'#8a97b0', 18:'#8a97b0', 19:'#8a97b0',
   20:'#7fae7f', 21:'#7fae7f', 22:'#7fae7f', 23:'#7fae7f', 24:'#f1c40f', 25:'#4a4a55',
+  26:'#6c5ce7',
   91:'#9c6b3f', 92:'#9c6b3f', 93:'#9c6b3f', 94:'#9c6b3f', 95:'#9c6b3f',
 };
 
@@ -1765,6 +1845,177 @@ document.getElementById("end-copy").addEventListener("click", async () => {
   }
 });
 
+// --- ability cache: interact button + drag-swap popup ---------------------
+
+const swapOverlay = document.getElementById("ability-swap-overlay");
+const swapPoolEl  = document.getElementById("swap-pool");
+const swapSlotsEl = document.getElementById("swap-slots");
+
+// Working state while the popup is open. `swapUniverse` is every ability in play
+// (the tile's offerings ∪ the hero's current loadout); `swapSlots` is the 3-slot
+// loadout being edited. The pool shown up top is DERIVED: universe minus slots,
+// so swapping an ability into a full slot returns the displaced one to the tile.
+let swapUniverse = [];
+let swapSlots    = [];
+
+function openSwapPopup() {
+  if (!pendingSwap) return;
+  swapSlots = normalizeLoadout(pendingSwap.loadout);
+  swapUniverse = [...new Set([...pendingSwap.tileAbilities, ...swapSlots.filter(Boolean)])];
+  renderSwap();
+  swapOverlay.hidden = false;
+}
+function closeSwapPopup() { swapOverlay.hidden = true; clearSwapDrag(); }
+
+// Abilities sitting in the tile right now (not currently equipped).
+function swapPoolIds() { return swapUniverse.filter(id => !swapSlots.includes(id)); }
+
+function makeChip(id, loc, idx) {
+  const ab = ABILITIES[id];
+  const chip = document.createElement("div");
+  chip.className = "swap-chip";
+  chip.dataset.loc = loc;
+  chip.dataset.idx = idx;
+  chip.dataset.id  = id;
+  if (ab) chip.style.setProperty("--chip", ab.color);
+  chip.innerHTML =
+    `<span class="swap-chip-glyph">${ab ? ab.glyph : "?"}</span>` +
+    `<span class="swap-chip-name">${ab ? ab.name : id}</span>`;
+  return chip;
+}
+
+function renderSwap() {
+  swapPoolEl.innerHTML = "";
+  const pool = swapPoolIds();
+  if (!pool.length) {
+    const empty = document.createElement("div");
+    empty.className = "swap-empty";
+    empty.textContent = "— nothing left to take —";
+    swapPoolEl.appendChild(empty);
+  } else {
+    pool.forEach((id, i) => swapPoolEl.appendChild(makeChip(id, "pool", i)));
+  }
+
+  swapSlotsEl.innerHTML = "";
+  for (let j = 0; j < SLOTS; j++) {
+    const id = swapSlots[j];
+    const slot = document.createElement("div");
+    slot.className = "swap-slot" + (id ? "" : " empty");
+    slot.dataset.slot = j;
+    if (id) slot.appendChild(makeChip(id, "slot", j));
+    else slot.innerHTML = `<span class="swap-slot-num">${j + 1}</span>`;
+    swapSlotsEl.appendChild(slot);
+  }
+}
+
+// Drag-swap (pointer events — native DnD is unreliable on this touch-first app).
+let sDragId = null, sDragLoc = null, sDragSlot = null;
+let sPointer = null, sStartX = 0, sStartY = 0, sDragging = false, sGhost = null;
+
+function makeSwapGhost(id, x, y) {
+  const ab = ABILITIES[id];
+  const g = document.createElement("div");
+  g.className = "swap-chip swap-chip-ghost";
+  if (ab) g.style.setProperty("--chip", ab.color);
+  g.innerHTML =
+    `<span class="swap-chip-glyph">${ab ? ab.glyph : "?"}</span>` +
+    `<span class="swap-chip-name">${ab ? ab.name : id}</span>`;
+  g.style.left = `${x}px`;
+  g.style.top  = `${y}px`;
+  document.body.appendChild(g);
+  return g;
+}
+
+function swapDropTarget(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  const slot = el.closest(".swap-slot");
+  if (slot) return { type: "slot", idx: Number(slot.dataset.slot) };
+  if (el.closest("#swap-pool")) return { type: "pool" };
+  return null;
+}
+
+function highlightSwapDrop(x, y) {
+  swapOverlay.querySelectorAll(".drop-hover").forEach(e => e.classList.remove("drop-hover"));
+  const el = document.elementFromPoint(x, y);
+  const slot = el && el.closest(".swap-slot");
+  if (slot) slot.classList.add("drop-hover");
+  else if (el && el.closest("#swap-pool")) swapPoolEl.classList.add("drop-hover");
+}
+
+function applySwapDrop(srcLoc, srcSlot, srcId, tgt) {
+  if (!tgt) return;
+  if (tgt.type === "slot") {
+    const j = tgt.idx;
+    if (srcLoc === "slot") {
+      if (srcSlot === j) return;
+      const tmp = swapSlots[j];           // swap two equipped slots
+      swapSlots[j] = swapSlots[srcSlot];
+      swapSlots[srcSlot] = tmp;
+    } else {
+      swapSlots[j] = srcId;               // equip from the tile (displaced returns to pool)
+    }
+  } else if (srcLoc === "slot") {
+    swapSlots[srcSlot] = null;            // drag an equipped ability back to the tile
+  }
+  renderSwap();
+}
+
+function clearSwapDrag() {
+  document.removeEventListener("pointermove", onSwapMove);
+  document.removeEventListener("pointerup", onSwapUp);
+  document.removeEventListener("pointercancel", onSwapUp);
+  if (sGhost) { sGhost.remove(); sGhost = null; }
+  swapOverlay.querySelectorAll(".drop-hover").forEach(e => e.classList.remove("drop-hover"));
+  sDragId = null; sDragLoc = null; sDragSlot = null; sPointer = null; sDragging = false;
+}
+
+function onSwapMove(e) {
+  if (sDragId === null || e.pointerId !== sPointer) return;
+  const dx = e.clientX - sStartX, dy = e.clientY - sStartY;
+  if (!sDragging) {
+    if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+    sDragging = true;
+    sGhost = makeSwapGhost(sDragId, e.clientX, e.clientY);
+  }
+  e.preventDefault();
+  if (sGhost) { sGhost.style.left = `${e.clientX}px`; sGhost.style.top = `${e.clientY}px`; }
+  highlightSwapDrop(e.clientX, e.clientY);
+}
+
+function onSwapUp(e) {
+  if (sDragId === null || e.pointerId !== sPointer) return;
+  if (sDragging) applySwapDrop(sDragLoc, sDragSlot, sDragId, swapDropTarget(e.clientX, e.clientY));
+  clearSwapDrag();
+}
+
+swapOverlay.addEventListener("pointerdown", e => {
+  const chip = e.target.closest(".swap-chip");
+  if (!chip || sDragId !== null) return;
+  sDragId   = chip.dataset.id;
+  sDragLoc  = chip.dataset.loc;
+  sDragSlot = sDragLoc === "slot" ? Number(chip.dataset.idx) : null;
+  sPointer  = e.pointerId;
+  sStartX = e.clientX; sStartY = e.clientY; sDragging = false;
+  document.addEventListener("pointermove", onSwapMove);
+  document.addEventListener("pointerup", onSwapUp);
+  document.addEventListener("pointercancel", onSwapUp);
+});
+
+function confirmSwap() {
+  swaps[roundMoves.length] = normalizeLoadout(swapSlots);
+  setSwaps(swaps);
+  closeSwapPopup();
+  renderGlobal(globalPos); // re-derive loadout + interact state for the new choice
+}
+
+if (interactBtn) interactBtn.addEventListener("click", openSwapPopup);
+document.getElementById("swap-confirm").addEventListener("click", confirmSwap);
+document.getElementById("swap-cancel").addEventListener("click", closeSwapPopup);
+document.getElementById("swap-close").addEventListener("click", closeSwapPopup);
+swapOverlay.addEventListener("click", e => { if (e.target === swapOverlay) closeSwapPopup(); });
+window.addEventListener("keydown", e => { if (e.key === "Escape" && !swapOverlay.hidden) closeSwapPopup(); }, true);
+
 // --- boot ----------------------------------------------------------------
 
 (async () => {
@@ -1778,8 +2029,8 @@ document.getElementById("end-copy").addEventListener("click", async () => {
     console.error("Rive init failed — serve over http (not file://):", err);
   }
 
-  // Build the persistent board grid (vision 5 default; resized when a map loads)
-  board = initBoard(boardEl, 5);
+  // Placeholder board (replaced by the real map's grid the moment one loads).
+  board = initBoard(boardEl, 1, 1, 5);
   board.filmstrips = filmstrips;
   if (filmstrips) startRafLoop(board);
 

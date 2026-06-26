@@ -612,6 +612,29 @@ body {
 .clear-diamond:hover { background: #ffe0de; }
 .clear-diamond > span { font-size: 19px; }
 
+/* Interact-with-tile button: dim until the hero ends a turn on an ability cache
+   that needs a swap, then it lights up gold and pulses. */
+.interact-diamond {
+  background: #f4efe6;
+  border-color: #e0d6c2;
+  color: #b8ac90;
+}
+.interact-diamond:disabled { cursor: default; opacity: 0.55; filter: grayscale(0.4); }
+.interact-diamond > span { font-size: 20px; }
+.interact-diamond.lit {
+  background: #fff6da;
+  border-color: #f0c84a;
+  color: #8a6a10;
+  box-shadow: 0 0 0 0 rgba(245,197,66,0.55);
+  animation: interact-pulse 1.4s ease-in-out infinite;
+}
+.interact-diamond.lit:hover { background: #ffefbf; }
+@keyframes interact-pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(245,197,66,0.55); }
+  70%  { box-shadow: 0 0 0 9px rgba(245,197,66,0);    }
+  100% { box-shadow: 0 0 0 0   rgba(245,197,66,0);    }
+}
+
 /* Action buttons double as drag-to-add sources — disable the browser's own
    touch handling on press so a drag toward the hotbar isn't read as a scroll. */
 .controls [data-token] { touch-action: none; }
@@ -945,6 +968,117 @@ body {
   padding: 6px;
 }
 .cell-popup-close:hover { color: var(--ink); }
+
+/* ---- ability cache swap popup --------------------------------------------- */
+
+.swap-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  background: rgba(20,16,12,0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  touch-action: none;
+}
+.swap-overlay[hidden] { display: none; }
+
+.swap-card {
+  position: relative;
+  width: min(420px, 100%);
+  background: var(--panel);
+  border: 1.5px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 20px 20px 18px;
+  color: var(--ink);
+  animation: pop 0.15s ease;
+}
+.swap-title { margin: 0 0 4px; font-size: 19px; font-weight: 800; color: #8a6a10; }
+.swap-hint  { margin: 0 0 14px; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+
+.swap-close {
+  position: absolute;
+  top: 10px; right: 12px;
+  background: none; border: none;
+  font-size: 24px; line-height: 1;
+  color: var(--muted); cursor: pointer; padding: 6px;
+}
+.swap-close:hover { color: var(--ink); }
+
+.swap-section-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--muted);
+  margin: 6px 0 6px;
+}
+
+.swap-pool {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  min-height: 60px;
+  padding: 10px;
+  border: 1.5px dashed #e0c97a;
+  border-radius: 12px;
+  background: #fffaec;
+  margin-bottom: 12px;
+}
+.swap-pool.drop-hover { background: #fff2c8; border-color: #f0c84a; }
+.swap-empty { color: var(--muted); font-size: 12.5px; align-self: center; margin: auto; }
+
+.swap-slots {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.swap-slot {
+  min-height: 60px;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  background: #faf8f4;
+  display: grid; place-items: center;
+  padding: 6px;
+}
+.swap-slot.empty { border-style: dashed; color: var(--muted); }
+.swap-slot.drop-hover { background: #eaf1ff; border-color: var(--accent); }
+.swap-slot-num { font-size: 18px; font-weight: 800; color: #cfc6ba; }
+
+.swap-chip {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px;
+  width: 88px; padding: 8px 6px;
+  border-radius: 10px;
+  border: 1.5px solid var(--chip, var(--line));
+  background: color-mix(in srgb, var(--chip, #888) 14%, #fff);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.swap-chip:active { cursor: grabbing; }
+.swap-chip-glyph { font-size: 22px; line-height: 1; }
+.swap-chip-name  { font-size: 11px; font-weight: 700; color: var(--ink); text-align: center; }
+.swap-slot .swap-chip { width: 100%; }
+
+.swap-chip-ghost {
+  position: fixed;
+  z-index: 140;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(1.05);
+  box-shadow: var(--shadow);
+}
+
+.swap-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.swap-btn {
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 18px;
+  font-size: 14px; font-weight: 700;
+  cursor: pointer;
+  background: #fff; color: var(--ink);
+}
+.swap-confirm { background: var(--accent); border-color: #2c4fa0; color: #fff; }
+.swap-confirm:hover { filter: brightness(1.06); }
+.swap-ghost:hover { background: #f2efea; }
 
 /* ---- dropzone bar --------------------------------------------------------- */
 

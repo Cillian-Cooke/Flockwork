@@ -159,6 +159,20 @@ export const ABILITIES = {
   },
 };
 
+// A hero carries SLOTS (3) ability slots. A loadout is always represented as a
+// fixed-length array with `null` for empty slots, so slot indices stay stable as
+// abilities are equipped, swapped, or removed.
+export const SLOTS = 3;
+
+export function normalizeLoadout(ids) {
+  const out = [];
+  for (let i = 0; i < SLOTS; i++) {
+    const id = ids && ids[i];
+    out.push(id && ABILITIES[id] ? id : null);
+  }
+  return out;
+}
+
 // Lock (forced waits) an ability imposes AFTER it resolves: instant abilities
 // spend 1 action on the press, directional ones spend 2 (press + direction).
 export function lockAfter(ability) {
