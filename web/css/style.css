@@ -820,7 +820,14 @@ body {
 .tile.drop-target { outline: 2px dashed var(--accent); }
 
 /* Animated arrow / wait riv on the hotbar tiles (replaces the glyph). */
-.tile .tile-anim { width: 82%; height: 82%; display: block; pointer-events: none; }
+.tile .tile-anim { width: 92%; height: 92%; display: block; pointer-events: none; }
+/* Riv tiles are just the animation — no box (the current-action tile keeps its
+   .playing outline so you can still see which action is firing). */
+.hotbar .tile.riv-tile:not(.playing) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
 
 /* Animated arrow / wait riv on the Move-pad buttons (replaces the static
    data-dir arrow; the small key letter stays beneath it). */

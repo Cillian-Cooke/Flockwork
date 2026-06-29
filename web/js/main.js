@@ -7,7 +7,7 @@ import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf, isMoveToken, AIM_TOK
 import { describeTerrain, effectOf, DIE } from "./terrain.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
 import { ABILITIES, lockAfter, normalizeLoadout, SLOTS } from "./abilities.js";
-import { initRiv, loadFilmstrips, buildActionStrips, playYouLose } from "./riv.js";
+import { initRiv, loadFilmstrips, buildActionStrips, loadEntityStrips, playYouLose } from "./riv.js";
 import { initShowcase, mountBoard, mountIcon, DEMOS } from "./showcase.js";
 import { buildShareText, computeScore } from "./share.js";
 
@@ -36,6 +36,7 @@ let dailyDayIndex = null;  // index of map currently being played (null = not in
 let board         = null;
 let riveModule    = null;
 let filmstrips    = null;
+let entityStrips  = new Map(); // entity kind → full-tile riv (hero, sheep, …)
 let actionStrips  = null;   // { arrow, wait } UI animations (move buttons + hotbar tiles)
 let youLosePlayed = false;
 let endShown      = false;
@@ -345,12 +346,16 @@ function drawStripFrame(cv, strip, fi, rot = 0) {
   else ctx.drawImage(img, 0, 0, s, s);
   ctx.restore();
 }
-// Play a strip's intro once (frame 0 → grown frame) then hold. Self-cancels, so
-// rebuilding the hotbar never leaks rAFs.
-function animateStripOnce(cv, strip, rot = 0, dur) {
-  const start = performance.now(), cyc = dur || strip.durSec || 0.5;
+// Play a strip's intro once (frame 0 → grown frame) then hold, optionally after a
+// `delay` (it holds on frame 0 until then — used for the staggered hotbar wave).
+// Self-cancels, so rebuilding the hotbar never leaks rAFs.
+function animateStripOnce(cv, strip, rot = 0, dur, delay = 0) {
+  const cyc = dur || strip.durSec || 0.5;
+  const begin = performance.now() + delay * 1000;
+  drawStripFrame(cv, strip, 0, rot); // hold at the start during any delay
   function step(now) {
-    const p = Math.min(1, ((now - start) / 1000) / cyc);
+    if (now < begin) { requestAnimationFrame(step); return; }
+    const p = Math.min(1, ((now - begin) / 1000) / cyc);
     drawStripFrame(cv, strip, Math.floor(p * strip.topIdx), rot);
     if (p < 1) requestAnimationFrame(step);
   }
@@ -378,9 +383,12 @@ function initActionButtons() {
 
 // --- hotbar ---------------------------------------------------------------
 
-// Index of the hotbar tile that should play its riv intro on the next render
-// (the one just added). Reset to -1 after each render.
+// Index of the hotbar tile just added. On that render it plays its riv intro
+// (fast), and every ghost/repeat tile after it cascades the same intro with a
+// staggered delay — they "copy" the new action down the round. -1 = no animation.
 let _animateIndex = -1;
+const HOTBAR_ANIM_DUR = 0.13; // fast intro
+const HOTBAR_STAGGER  = 0.06; // delay added per ghost tile → cascade
 
 function tileKind(token) {
   const [k] = classify(token);
@@ -475,13 +483,21 @@ function makeTile(token, tickNo, solid, index, info) {
   // frame. Ability tiles keep their glyph.
   const useRiv = actionStrips && role === undefined && (isMoveToken(token) || token === WAIT_TOKEN);
   if (useRiv) {
+    tile.classList.add("riv-tile"); // box removed in CSS — just the animation
     tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${badge}`;
     const strip = isMoveToken(token) ? actionStrips.arrow : actionStrips.wait;
     const rot = isMoveToken(token) ? tokenRotation(token) : 0;
     const cv = document.createElement("canvas");
     cv.className = "tile-anim";
     cv.width = cv.height = Math.round(48 * DPR);
-    if (solid && index === _animateIndex) animateStripOnce(cv, strip, rot);
+    // On an add: the new tile plays its intro now; the ghost repeats after it
+    // cascade the same intro, each delayed a little more (a wave down the round).
+    let doAnim = false, delaySec = 0;
+    if (_animateIndex >= 0) {
+      if (index === _animateIndex) doAnim = true;
+      else if (!solid) { doAnim = true; delaySec = (index - _animateIndex) * HOTBAR_STAGGER; }
+    }
+    if (doAnim) animateStripOnce(cv, strip, rot, HOTBAR_ANIM_DUR, Math.max(0, delaySec));
     else drawStripFrame(cv, strip, strip.topIdx, rot);
     tile.appendChild(cv);
   } else {
@@ -962,6 +978,7 @@ function loadLevelData(data, sourceName = "custom map", dailyCtx = null) {
     if (board) board.stopped = true;
     board = initBoard(boardEl, rows, cols, newVision);
     board.filmstrips = filmstrips;
+    board.entityStrips = entityStrips;
     if (filmstrips) startRafLoop(board);
   }
 
@@ -1031,6 +1048,7 @@ window.addEventListener("resize", () => {
     board = initBoard(boardEl, mapRows, mapCols, vision);
     board.focusIdx = focusIdx;
     board.filmstrips = filmstrips;
+    board.entityStrips = entityStrips;
     if (filmstrips) startRafLoop(board);
     if (lastSnapshot) updateBoard(board, lastSnapshot.gmap);
   }
@@ -1580,6 +1598,7 @@ function renderShowcaseHotbar(tokens) {
     tile.className = `tile ${tileKind(tok)} solid`;
     tile.innerHTML = `<span class="tile-tick">${i + 1}</span>`;
     if (actionStrips && (isMoveToken(tok) || tok === WAIT_TOKEN)) {
+      tile.classList.add("riv-tile"); // box removed in CSS — just the animation
       const strip = isMoveToken(tok) ? actionStrips.arrow : actionStrips.wait;
       const cv = document.createElement("canvas");
       cv.className = "tile-anim";
@@ -2276,8 +2295,11 @@ window.addEventListener("keydown", e => { if (e.key === "Escape" && !swapOverlay
     actionStrips = await buildActionStrips();
     initActionButtons();
     renderHotbar();
-    // Terrain tiles stream in the background; not awaited.
-    loadFilmstrips(filmstrips);
+    // Terrain then entity tiles stream in the background; not awaited. Chained so
+    // they don't hit the single Rive runtime at the same time.
+    loadFilmstrips(filmstrips).then(() => loadEntityStrips(entityStrips)).then(() => {
+      if (board && lastSnapshot) updateBoard(board, lastSnapshot.gmap); // show entities once their riv is ready
+    });
   } catch (err) {
     console.error("Rive init failed — serve over http (not file://):", err);
   }
@@ -2285,6 +2307,7 @@ window.addEventListener("keydown", e => { if (e.key === "Escape" && !swapOverlay
   // Placeholder board (replaced by the real map's grid the moment one loads).
   board = initBoard(boardEl, 1, 1, 5);
   board.filmstrips = filmstrips;
+    board.entityStrips = entityStrips;
   if (filmstrips) startRafLoop(board);
 
   // Auto-load today's daily map from the bundled pack

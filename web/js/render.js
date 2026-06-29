@@ -2,7 +2,7 @@
 
 import * as terrain from "./terrain.js";
 import { ROUND_LENGTH } from "./tokens.js";
-import { HERO, ENEMY, SHEEP } from "./entity.js";
+import { HERO, ENEMY, SHEEP, entityRivKey } from "./entity.js";
 import { loopSummary } from "./game.js";
 import { TERRAIN_FALLBACK, ANIM_TERRAIN } from "./riv.js";
 
@@ -197,7 +197,7 @@ export function updateBoard(board, gmap, dying = []) {
     }
   }
   for (const [key, anim] of animCells) {
-    if (!newVisible.has(key)) anim.target = 0;
+    if (!newVisible.has(key)) { anim.target = 0; anim.entTarget = 0; }
   }
 
   // Update each cell from its world tile (window origin + screen offset). Tiles
@@ -215,22 +215,35 @@ export function updateBoard(board, gmap, dying = []) {
       cell.div.classList.toggle('fog', !inVision);
       cell.div.classList.toggle('fx-ability', inVision && fxSet.has(`${wr},${wc}`));
 
-      // Entity overlay (only what you can see)
+      // Entity overlay. Entities WITH a riv (hero/sheep/…) are drawn full-tile on
+      // the canvas by the rAF (and the ground animates away/back around them);
+      // entities without one keep the letter-glyph disc.
       cell.div.classList.remove('ent-hero', 'ent-enemy', 'ent-sheep', 'blocked', 'barrier', 'charging');
       delete cell.div.dataset.entity;
       cell.inner.textContent = '';
       cell.inner.className = 'cell-inner';
 
+      const anim = animCells.get(`${wr},${wc}`);
+      let entKind = null;
       if (inVision) {
         const ent = entityAt(gmap, wr, wc);
         if (ent) {
-          cell.div.dataset.entity = ent.letter;
-          cell.div.classList.add(`ent-${ent.kind}`);
-          if (ent.invuln > 0) cell.div.classList.add('barrier');
-          if (ent.armedAbility) cell.div.classList.add('charging');
-          cell.inner.textContent = ent.letter;
-          cell.inner.classList.add('glyph');
+          const rivKey = entityRivKey(ent); // hero / sheep / guard / …
+          if (board.entityStrips && board.entityStrips.has(rivKey)) {
+            entKind = rivKey; // drawn full-tile on the canvas by the rAF
+          } else {
+            cell.div.dataset.entity = ent.letter;
+            cell.div.classList.add(`ent-${ent.kind}`);
+            if (ent.invuln > 0) cell.div.classList.add('barrier');
+            if (ent.armedAbility) cell.div.classList.add('charging');
+            cell.inner.textContent = ent.letter;
+            cell.inner.classList.add('glyph');
+          }
         }
+      }
+      if (anim) {
+        if (entKind) { anim.entTarget = 1; anim.entKind = entKind; if (anim.entProg == null) anim.entProg = 0; }
+        else anim.entTarget = 0;
       }
     }
   }
@@ -424,36 +437,54 @@ function frame(board, ts) {
       frameIdx = -2; alpha = Math.min(1, p * 2);      // flat-colour fallback (fades in)
     }
 
+    // --- entity transition: a full-tile riv that covers the ground -----------
+    // As the entity arrives, entProg → 1: the ground "animates away" (its frame
+    // is scaled toward 0) and the entity draws in on top. When it leaves, entProg
+    // → 0: the entity draws out and the ground animates back in. Fast = a charge.
+    const eStrip = anim.entKind ? (board.entityStrips && board.entityStrips.get(anim.entKind)) : null;
+    const eTarget = (anim.entTarget && eStrip) ? 1 : 0; // need the strip to show one
+    if (anim.entProg == null) anim.entProg = 0;
+    let entMoving = false;
+    if (anim.entProg < eTarget) { anim.entProg = Math.min(1, anim.entProg + dt / 0.14); entMoving = true; }
+    else if (anim.entProg > eTarget) { anim.entProg = Math.max(0, anim.entProg - dt / 0.14); entMoving = true; }
+    if (anim.entProg <= 0.001 && !anim.entTarget) anim.entKind = null;
+    const e = anim.entProg;
+
     // Does this cell still need redrawing on future frames?
-    const animating = revealing || gateMoving || (p >= 1 && !!cfg);
+    const animating = revealing || gateMoving || entMoving || (p >= 1 && !!cfg);
     if (animating) active = true;
 
     // Skip the redraw entirely if the cell's pixels are unchanged since last time.
-    const drawKey = frameIdx === -2
-      ? `${si},${sj},c${terrainId},${Math.round(alpha * 30)}`
-      : `${si},${sj},${frameIdx}`;
+    const terrKey = frameIdx === -2 ? `c${terrainId},${Math.round(alpha * 30)}` : `${frameIdx}`;
+    const drawKey = `${si},${sj},${terrKey},e${anim.entKind || ''}${Math.round(e * 30)}`;
     if (!full && !animating && drawKey === anim._k) continue;
     anim._k = drawKey;
 
     if (!full) clearCanvas(cell); // (a full repaint already cleared every cell)
 
-    if (frameIdx === -2) {
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = TERRAIN_FALLBACK[terrainId];
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.globalAlpha = 1;
-    } else if (frameIdx >= 0) {
-      const img = filmstrips.get(terrainId).frames[frameIdx];
-      const dir = !isGate && terrain.conveyorDir(terrainId); // belt art points UP
-      if (dir) {
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate(Math.atan2(dir[1], -dir[0]));
-        ctx.drawImage(img, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height);
-        ctx.restore();
-      } else {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const g = 1 - e; // how much of the ground is showing
+    if (g > 0.001) {
+      if (frameIdx === -2) {
+        ctx.globalAlpha = alpha * g;
+        ctx.fillStyle = TERRAIN_FALLBACK[terrainId];
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
+      } else if (frameIdx >= 0) {
+        const img = filmstrips.get(terrainId).frames[Math.round(g * frameIdx)];
+        const dir = !isGate && terrain.conveyorDir(terrainId); // belt art points UP
+        if (dir) {
+          ctx.save();
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.rotate(Math.atan2(dir[1], -dir[0]));
+          ctx.drawImage(img, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height);
+          ctx.restore();
+        } else {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }
       }
+    }
+    if (e > 0.001 && eStrip) {
+      ctx.drawImage(eStrip.frames[Math.round(e * eStrip.topIdx)], 0, 0, canvas.width, canvas.height);
     }
     // terrain 0 / no strip: nothing drawn (canvas already cleared) → void shows through
   }

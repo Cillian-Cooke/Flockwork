@@ -39,6 +39,14 @@ export const ACTION_RIV = {
   wait:  'Nothing Action.riv',
 };
 
+// Entity animations, drawn full-tile on the board (cover the ground). Keyed by
+// entity kind so the renderer can look them up; kinds without a riv keep the glyph.
+export const ENTITY_RIV = {
+  hero:  'Hero.riv',
+  sheep: 'Sheep.riv',
+  guard: 'Turtle.riv', // the guard enemy variant
+};
+
 // CSS fallback colours for terrain IDs without a .riv file
 export const TERRAIN_FALLBACK = {
   7: '#3ab8a8',
@@ -184,6 +192,16 @@ export async function buildActionStrips() {
     arrow: await loadStrip(ACTION_RIV.arrow),
     wait:  await loadStrip(ACTION_RIV.wait),
   };
+}
+
+// Stream the entity filmstrips into a Map keyed by entity kind, yielding between.
+export async function loadEntityStrips(strips) {
+  for (const [kind, name] of Object.entries(ENTITY_RIV)) {
+    await nextIdle();
+    try { strips.set(kind, await loadStrip(name)); }
+    catch (err) { console.warn(`entity riv "${name}" failed to load:`, err); }
+  }
+  return strips;
 }
 
 // Play You_Lose!.riv full-screen on an overlay canvas for durationMs, then freeze.

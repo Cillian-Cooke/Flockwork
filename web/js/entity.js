@@ -22,6 +22,18 @@ export function kindOf(letter) {
   throw new Error(`not an entity letter: ${JSON.stringify(letter)}`);
 }
 
+// The key used to pick an entity's full-tile riv (ENTITY_RIV in riv.js). Enemies
+// split into variants so e.g. a guard can have its own art (Turtle) while other
+// enemy variants without a riv fall back to the letter glyph.
+export function entityRivKey(e) {
+  if (e.kind === HERO) return "hero";
+  if (e.kind === SHEEP) return "sheep";
+  if (e.heavy) return "boulder";
+  if (e.lethalToSheep && e.lethalToHero) return "wolf";
+  if (e.lethalToHero) return "guard";
+  return "critter";
+}
+
 export class Entity {
   constructor({ letter, kind, row, col, loop = [], alive = true,
                 lastMove = [0, 0],
