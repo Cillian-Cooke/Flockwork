@@ -251,6 +251,9 @@ export function updateBoard(board, gmap, dying = []) {
   // Death beat: draw entities that just fell into lava/void on the hazard tile
   // for one frame (they vanish next frame) so the cause of death is visible.
   for (const d of dying) {
+    // Riv entities already animate their fatal move on the canvas — don't also
+    // pop a letter-glyph for them. Glyph-only entities still get the sink flash.
+    if (d.rivKey && board.entityStrips && board.entityStrips.has(d.rivKey)) continue;
     const si = d.row - originRow, sj = d.col - originCol;
     if (si < 0 || si >= rows || sj < 0 || sj >= cols) continue;
     const cell = cells[si][sj];
@@ -377,6 +380,33 @@ function frame(board, ts) {
 
   let active = false; // any cell still animating → keep looping next frame
 
+  // Multi-tile move replay: an entity sliding across several tiles (conveyor, ice,
+  // glide, charge) or a fatal move is shown crossing EVERY tile so it's easy to
+  // follow. mvMap holds the entity's current coverage on the two straddled cells;
+  // pathSet marks every cell on a running path (those use the path, not entProg).
+  const mvMap = new Map();
+  const pathSet = new Set();
+  const anims = board.moveAnims;
+  if (anims && anims.length) {
+    for (let k = anims.length - 1; k >= 0; k--) {
+      const m = anims[k];
+      const h = (ts - m.start) / m.stepMs; // float head position along the path
+      if (h >= m.cells.length - 1) { anims.splice(k, 1); continue; } // arrived → done
+      active = true;
+      for (const [r, c] of m.cells) pathSet.add(`${r},${c}`);
+      const i = Math.max(0, Math.floor(h));
+      const frac = Math.min(1, Math.max(0, h - i));
+      const put = (cellRC, ev) => {
+        if (!cellRC) return;
+        const kk = `${cellRC[0]},${cellRC[1]}`;
+        const cur = mvMap.get(kk);
+        if (!cur || ev > cur.e) mvMap.set(kk, { e: ev, kind: m.rivKey });
+      };
+      put(m.cells[i], 1 - frac);      // entity leaving this tile
+      put(m.cells[i + 1], frac);      // entity arriving on the next
+    }
+  }
+
   for (const [key, anim] of animCells) {
     const spd = anim.speed ?? ANIM_SPEED_DEFAULT;
     let revealing = false;
@@ -445,18 +475,26 @@ function frame(board, ts) {
     const eTarget = (anim.entTarget && eStrip) ? 1 : 0; // need the strip to show one
     if (anim.entProg == null) anim.entProg = 0;
     let entMoving = false;
-    if (anim.entProg < eTarget) { anim.entProg = Math.min(1, anim.entProg + dt / 0.14); entMoving = true; }
-    else if (anim.entProg > eTarget) { anim.entProg = Math.max(0, anim.entProg - dt / 0.14); entMoving = true; }
+    if (anim.entProg < eTarget) { anim.entProg = Math.min(1, anim.entProg + dt / 0.28); entMoving = true; }
+    else if (anim.entProg > eTarget) { anim.entProg = Math.max(0, anim.entProg - dt / 0.28); entMoving = true; }
     if (anim.entProg <= 0.001 && !anim.entTarget) anim.entKind = null;
-    const e = anim.entProg;
+
+    // On a move path this cell's entity coverage comes from the path replay
+    // (mvMap), not the endpoint transition — so the entity is followable tile by
+    // tile. Off-path cells use the normal entProg.
+    const onPath = pathSet.has(key);
+    const mv = mvMap.get(key);
+    const e = onPath ? (mv ? mv.e : 0) : anim.entProg;
+    const drawKind = (mv && mv.kind) || anim.entKind;
+    const dStrip = drawKind ? (board.entityStrips && board.entityStrips.get(drawKind)) : null;
 
     // Does this cell still need redrawing on future frames?
-    const animating = revealing || gateMoving || entMoving || (p >= 1 && !!cfg);
+    const animating = revealing || gateMoving || entMoving || onPath || (p >= 1 && !!cfg);
     if (animating) active = true;
 
     // Skip the redraw entirely if the cell's pixels are unchanged since last time.
     const terrKey = frameIdx === -2 ? `c${terrainId},${Math.round(alpha * 30)}` : `${frameIdx}`;
-    const drawKey = `${si},${sj},${terrKey},e${anim.entKind || ''}${Math.round(e * 30)}`;
+    const drawKey = `${si},${sj},${terrKey},e${drawKind || ''}${Math.round(e * 30)}`;
     if (!full && !animating && drawKey === anim._k) continue;
     anim._k = drawKey;
 
@@ -483,8 +521,8 @@ function frame(board, ts) {
         }
       }
     }
-    if (e > 0.001 && eStrip) {
-      ctx.drawImage(eStrip.frames[Math.round(e * eStrip.topIdx)], 0, 0, canvas.width, canvas.height);
+    if (e > 0.001 && dStrip) {
+      ctx.drawImage(dStrip.frames[Math.round(e * dStrip.topIdx)], 0, 0, canvas.width, canvas.height);
     }
     // terrain 0 / no strip: nothing drawn (canvas already cleared) → void shows through
   }

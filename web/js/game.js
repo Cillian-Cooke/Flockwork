@@ -7,7 +7,7 @@
 import { buildGameMap, LEVEL } from "./mapdata.js";
 import { Engine } from "./engine.js";
 import { ROUND_LENGTH, ALL_TOKENS } from "./tokens.js";
-import { HERO, ENEMY, SHEEP } from "./entity.js";
+import { HERO, ENEMY, SHEEP, entityRivKey } from "./entity.js";
 import { normalizeLoadout } from "./abilities.js";
 
 export class InputError extends Error {}
@@ -123,6 +123,18 @@ function runRound(engine, gmap, moves, ticks, log) {
       }
     }
     log.push(`tick ${t + 1}/${ROUND_LENGTH}  '${token}'  ${events.join("  ") || "(no change)"}`);
+
+    // Record where each entity moved this tick (overwritten each tick, so it holds
+    // the LAST tick's moves) — the renderer replays them so a multi-tile slide
+    // (conveyor/ice/charge) is followable tile-by-tile, and a fatal move animates.
+    const mv = [];
+    for (const e of gmap.entities) {
+      const prev = before.get(e);
+      if (prev && prev.alive && (prev.row !== e.row || prev.col !== e.col)) {
+        mv.push({ from: [prev.row, prev.col], to: [e.row, e.col], rivKey: entityRivKey(e), died: !e.alive });
+      }
+    }
+    engine._lastMoves = mv;
 
     const st = statusOf(gmap);
     if (st !== "playing") return { status: st, stoppedAt: t + 1 };

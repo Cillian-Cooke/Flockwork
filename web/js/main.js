@@ -5,7 +5,7 @@ import { buildGameMap, MapError } from "./mapdata.js";
 import { initBoard, updateBoard, startRafLoop, buildInitialLog, buildTickEntries, renderPathPreview, clearPathPreview } from "./render.js";
 import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf, isMoveToken, AIM_TOKEN, LOCK_TOKEN, MOVE_TOKENS, WAIT_TOKEN } from "./tokens.js";
 import { describeTerrain, effectOf, DIE } from "./terrain.js";
-import { HERO, ENEMY, SHEEP } from "./entity.js";
+import { HERO, ENEMY, SHEEP, entityRivKey } from "./entity.js";
 import { ABILITIES, lockAfter, normalizeLoadout, SLOTS } from "./abilities.js";
 import { initRiv, loadFilmstrips, buildActionStrips, loadEntityStrips, playYouLose } from "./riv.js";
 import { initShowcase, mountBoard, mountIcon, DEMOS } from "./showcase.js";
@@ -40,6 +40,7 @@ let entityStrips  = new Map(); // entity kind → full-tile riv (hero, sheep, �
 let actionStrips  = null;   // { arrow, wait } UI animations (move buttons + hotbar tiles)
 let youLosePlayed = false;
 let endShown      = false;
+let deferEnd      = false; // suppress the auto end-screen so the final move can animate first
 
 const KEYMAP = { w:"w",a:"a",s:"s",d:"d","1":"1","2":"2","3":"3",".":"." };
 const SYMBOL  = { w:"↑",s:"↓",a:"←",d:"→",".":"·" };
@@ -159,6 +160,7 @@ function showState(pos) {
 
   // Telegraph the tiles any ability touched on this exact tick (red flash).
   if (board) board.abilityFx = (snap.engine && snap.engine._fx) || [];
+  if (board) board.moveAnims = []; // cleared by default; renderGlobal re-seeds during playback
   if (board) updateBoard(board, snap.gmap);
 
   const roundNum = Math.floor(pos / ROUND_LENGTH) + 1;
@@ -226,8 +228,41 @@ function updatePathPreview() {
 // programmatic moves (append, play, load) where the selection jumps.
 function renderGlobal(pos) {
   const snap = showState(pos);
+  seedMoveAnims(snap);
   updateTimelineDots();
   return snap;
+}
+
+// Turn this tick's recorded entity moves into board move-animations and return the
+// longest path (in tiles) so the caller can pace the tick to fit. A straight
+// multi-tile slide (conveyor/ice/glide/charge) — or any fatal move — replays
+// across every tile; ordinary single steps fall through to the normal transition.
+const MOVE_STEP_MS = 240; // per tile (slow enough to follow by eye)
+function seedMoveAnims(snap) {
+  if (!board) return 0;
+  board.moveAnims = [];
+  const moves = snap.engine && snap.engine._lastMoves;
+  if (!moves || !moves.length) return 0;
+  let maxLen = 0;
+  const now = performance.now();
+  for (const m of moves) {
+    const [fr, fc] = m.from, [tr, tc] = m.to;
+    const dr = tr - fr, dc = tc - fc;
+    const dist = Math.max(Math.abs(dr), Math.abs(dc));
+    const straight = (dr === 0 || dc === 0);
+    if (straight && dist > 1) {
+      const sr = Math.sign(dr), sc = Math.sign(dc);
+      const cells = [];
+      for (let i = 0; i <= dist; i++) cells.push([fr + sr * i, fc + sc * i]);
+      board.moveAnims.push({ rivKey: m.rivKey, cells, start: now, stepMs: MOVE_STEP_MS });
+      maxLen = Math.max(maxLen, dist);
+    } else if (m.died) {
+      // a fatal step (e.g. into lava) — animate the entity onto the hazard tile
+      board.moveAnims.push({ rivKey: m.rivKey, cells: [m.from, m.to], start: now, stepMs: MOVE_STEP_MS });
+      maxLen = Math.max(maxLen, 1);
+    }
+  }
+  return maxLen;
 }
 
 // Mark a dot as the current selection (move the blue ring) without rebuilding
@@ -616,7 +651,7 @@ function hazardDeaths(prevSnap, curSnap) {
   for (let i = 0; i < Math.min(prev.length, cur.length); i++) {
     const p = prev[i], c = cur[i];
     if (p.alive && !c.alive && effectOf(curSnap.gmap.terrain[c.row]?.[c.col]) === DIE) {
-      out.push({ row: c.row, col: c.col, letter: c.letter, kind: c.kind, entityType: c.entityType });
+      out.push({ row: c.row, col: c.col, letter: c.letter, kind: c.kind, entityType: c.entityType, rivKey: entityRivKey(c) });
     }
   }
   return out;
@@ -632,6 +667,7 @@ async function playRound() {
   catch (err) { appendChatLine(`! ${err.message}`, "error"); return; }
 
   playing = true;
+  deferEnd = true; // let the final move/death animate before the end screen
   setControlsDisabled(true);
 
   for (let t = 1; t <= ROUND_LENGTH; t++) {
@@ -644,20 +680,29 @@ async function playRound() {
     const hotbarTiles = [...hotbarEl.children];
     hotbarTiles.forEach((tile, i) => tile.classList.toggle("playing", i === t - 1));
 
-    // If anything fell into lava/void this tick, flash it on the hazard (with the
-    // pusher already on its old tile) before it vanishes.
+    // Pace the tick so a multi-tile slide (or fatal move) has time to play across
+    // every tile before the next action.
+    const moveLen = board ? board.moveAnims.reduce((m, a) => Math.max(m, a.cells.length - 1), 0) : 0;
+    const animWait = Math.max(500, moveLen * MOVE_STEP_MS + 300);
+
+    // If anything fell into lava/void this tick, let the move carry it onto the
+    // hazard, then sink/fade it before it vanishes.
     const dying = hazardDeaths(prevSnap, snap);
     if (dying.length && board) {
+      await delay(animWait);
       updateBoard(board, snap.gmap, dying);
-      await delay(300);
+      await delay(320);
       updateBoard(board, snap.gmap);
-      await delay(220);
+      await delay(200);
     } else {
-      await delay(500);
+      await delay(animWait);
     }
     if (snap.status !== "playing") {
       hotbarTiles.forEach(tile => tile.classList.remove("playing"));
+      await delay(450);                  // a beat on the final state…
+      showEndOverlay(snap.status);       // …then the win/lose screen
       playing = false;
+      deferEnd = false;
       setControlsDisabled(false);
       return;
     }
@@ -669,6 +714,7 @@ async function playRound() {
   currentMoves = [];
   renderHotbar();
   playing = false;
+  deferEnd = false;
   setControlsDisabled(false);
   // Re-render at the new boundary so the Interact button lights immediately when
   // the hero has ended this round on an ability cache (no extra click needed).
@@ -2055,7 +2101,7 @@ function hideEndOverlay() {
 }
 
 function checkGameStatus(snap) {
-  if (snap.status !== "playing" && !endShown) {
+  if (snap.status !== "playing" && !endShown && !deferEnd) {
     showEndOverlay(snap.status);
   }
   if (snap.status === "playing") {
