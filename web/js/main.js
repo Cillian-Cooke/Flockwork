@@ -8,6 +8,7 @@ import { describeTerrain, effectOf, DIE } from "./terrain.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
 import { ABILITIES, lockAfter, normalizeLoadout, SLOTS } from "./abilities.js";
 import { initRiv, buildFilmstrips, playYouLose } from "./riv.js";
+import { initShowcase, mountShowcase, DEMOS } from "./showcase.js";
 import { buildShareText, computeScore } from "./share.js";
 
 // The loaded hero's ability loadout (3 slots) — drives the ability buttons and
@@ -151,6 +152,8 @@ function showState(pos) {
     renderHotbar();
   }
 
+  // Telegraph the tiles any ability touched on this exact tick (red flash).
+  if (board) board.abilityFx = (snap.engine && snap.engine._fx) || [];
   if (board) updateBoard(board, snap.gmap);
 
   const roundNum = Math.floor(pos / ROUND_LENGTH) + 1;
@@ -1385,6 +1388,27 @@ function cellInfoHTML(cell) {
          `<div>${info.desc}</div><div class="tt-sub">[${r}][${c}]</div>`;
 }
 
+// Which showcase demo (terrain effect or entity variant) a cell maps to — mirrors
+// the entity/terrain split in cellInfoHTML and the variant tests in describeEntity.
+function demoKeyFor(cell) {
+  if (!lastSnapshot) return null;
+  if (cell.classList.contains("fog") || cell.dataset.terrain === "?") return null;
+  const r = Number(cell.dataset.worldR ?? cell.dataset.r);
+  const c = Number(cell.dataset.worldC ?? cell.dataset.c);
+  const ent = entityAt(lastSnapshot.gmap, r, c);
+  if (ent) {
+    if (ent.kind === HERO) return "hero";
+    if (ent.kind === SHEEP) return "sheep";
+    if (ent.heavy) return "boulder";
+    if (ent.lethalToSheep && ent.lethalToHero) return "wolf";
+    if (ent.lethalToHero) return "guard";
+    return "harmless";
+  }
+  const tid = Number(cell.dataset.terrain);
+  if (tid === 0) return DIE; // void inspects as the lethal-fall demo
+  return effectOf(tid);
+}
+
 boardEl.addEventListener("mousemove", e => {
   const cell = e.target.closest(".cell");
   const html = cell && cellInfoHTML(cell);
@@ -1396,6 +1420,16 @@ boardEl.addEventListener("mousemove", e => {
 });
 boardEl.addEventListener("mouseleave", () => { tooltip.hidden = true; });
 
+// Desktop: click a tile/entity to open the animated card (the hover tooltip above
+// stays for quick peeks). Touch is handled by the tap logic further below.
+boardEl.addEventListener("click", e => {
+  const cell = e.target.closest(".cell");
+  const html = cell && cellInfoHTML(cell);
+  if (!html) return;
+  tooltip.hidden = true;
+  showCellPopup(html, demoKeyFor(cell));
+});
+
 // --- mobile board: tap a tile/enemy for an info popup; pinch/drag to zoom & pan
 // (touch only — desktop keeps the hover tooltip above untouched).
 
@@ -1404,12 +1438,21 @@ const cellPopupBody    = document.getElementById("cell-popup-body");
 const cellPopupClose   = document.getElementById("cell-popup-close");
 
 let cellPopupOpenedAt = 0;
-function showCellPopup(html) {
-  cellPopupBody.innerHTML = html;
+let showcaseHandle = null;
+function showCellPopup(html, key) {
+  if (showcaseHandle) { showcaseHandle.stop(); showcaseHandle = null; }
+  const hasDemo = key && DEMOS[key];
+  cellPopupBody.innerHTML =
+    (hasDemo ? `<div class="showcase-mount" id="cell-card-anim"></div>` : "") + html;
   cellPopupOverlay.hidden = false;
   cellPopupOpenedAt = performance.now();
+  const mount = document.getElementById("cell-card-anim");
+  if (mount && hasDemo) showcaseHandle = mountShowcase(mount, key);
 }
-function hideCellPopup() { cellPopupOverlay.hidden = true; }
+function hideCellPopup() {
+  cellPopupOverlay.hidden = true;
+  if (showcaseHandle) { showcaseHandle.stop(); showcaseHandle = null; }
+}
 cellPopupClose.addEventListener("click", hideCellPopup);
 cellPopupOverlay.addEventListener("click", e => {
   // The same touch that opens the popup can leave behind a synthetic mouse
@@ -1543,7 +1586,7 @@ function touchEnd(e) {
     if (!touchGestureMoved && tapStart) {
       const cell = document.elementFromPoint(tapStart.x, tapStart.y)?.closest(".cell");
       const html = cell && cellInfoHTML(cell);
-      if (html) showCellPopup(html);
+      if (html) showCellPopup(html, demoKeyFor(cell));
     }
     tapStart = null; panOrigin = null; pinchStartDist = null; pinchStartMid = null;
   } else if (touchPoints.size === 1 && board) {
@@ -2048,6 +2091,7 @@ window.addEventListener("keydown", e => { if (e.key === "Escape" && !swapOverlay
   try {
     riveModule = await initRiv();
     filmstrips  = await buildFilmstrips();
+    initShowcase(filmstrips);
   } catch (err) {
     console.error("Rive init failed — serve over http (not file://):", err);
   }

@@ -308,6 +308,21 @@ body {
 .ent-enemy .glyph::before { background: var(--e-enemy); }
 .ent-sheep .glyph { color: #3a3530; }
 .ent-sheep .glyph::before { background: var(--e-sheep); border: 2px solid #c8c4b0; }
+/* Ability telegraph: a translucent red square over every tile the ability acts
+   on, shown only on the tick it fires (sits above the tile, below the glyph). */
+.cell.fx-ability::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: rgba(229,57,53,0.34);
+  border: 1.5px solid rgba(229,57,53,0.7);
+  border-radius: 3px;
+  pointer-events: none;
+  animation: fx-pop 0.16s ease-out;
+}
+@keyframes fx-pop { from { opacity: 0; } to { opacity: 1; } }
+
 .cell.blocked { outline: 3px solid #2c5de5; outline-offset: -3px; }
 .cell.barrier { outline: 3px dashed #58b8d8; outline-offset: -3px; }
 .cell.charging { outline: 3px dotted var(--charge); outline-offset: -3px; }
@@ -1004,6 +1019,49 @@ body {
   padding: 6px;
 }
 .cell-popup-close:hover { color: var(--ink); }
+
+/* ---- inspect-card animated showcase (Clash-Royale-style) ------------------- */
+
+.showcase-mount {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+.showcase {
+  position: relative;
+  border-radius: 12px;
+  padding: 8px;
+  background: #f2efe9;
+  border: 1.5px solid var(--line);
+  box-shadow: inset 0 1px 4px rgba(0,0,0,0.08);
+}
+.showcase-grid {
+  display: grid;
+  position: relative;
+}
+.showcase-tile {
+  display: block;
+  border-radius: 4px;
+}
+/* Actors float over the grid, glued to the grid's top-left and nudged by the
+   8px .showcase padding so cell (0,0) lines up with the first tile. */
+.showcase-actors {
+  position: absolute;
+  inset: 8px auto auto 8px;
+  pointer-events: none;
+}
+.showcase-actor {
+  position: absolute;
+  top: 0; left: 0;
+  will-change: transform, opacity;
+}
+
+/* On a wider screen, present the card as a centred dialog rather than a phone-
+   style bottom sheet. */
+@media (min-width: 700px) {
+  .cell-popup-overlay { align-items: center; }
+  .cell-popup { width: min(340px, 100%); }
+}
 
 /* ---- ability cache swap popup --------------------------------------------- */
 

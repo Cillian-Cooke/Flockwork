@@ -33,6 +33,10 @@ export const ABILITIES = {
   duplicate: {
     name: "Duplicate", glyph: "👥", directional: true, cost: 3, color: "#ef4444",
     desc: "Spawn a copy of the hero one tile in the chosen direction. Every copy runs the same moves — build a swarm. Costs 3 actions.",
+    affected(engine, hero, dir) {
+      if (!isDir(dir)) return [];
+      return [[hero.row + dir[0], hero.col + dir[1]]];
+    },
     run(engine, hero, dir) {
       if (!isDir(dir)) return;
       const nr = hero.row + dir[0], nc = hero.col + dir[1];
@@ -51,6 +55,19 @@ export const ABILITIES = {
   hook: {
     name: "Hook", glyph: "🪝", directional: true, cost: 2, color: "#f59e0b",
     desc: "Drag the first entity in that direction one tile toward you. The cheap, precise repositioning tool. Costs 2 actions.",
+    affected(engine, hero, dir) {
+      if (!isDir(dir)) return [];
+      const [dr, dc] = dir;
+      const cells = [];
+      let r = hero.row + dr, c = hero.col + dc;
+      // The hook's reach: every tile it scans, up to and including the entity it grabs.
+      while (engine._inBounds(r, c) && terrain.isPassable(engine.gmap.terrain[r][c])) {
+        cells.push([r, c]);
+        if (engine._occupant(r, c, hero)) break;
+        r += dr; c += dc;
+      }
+      return cells;
+    },
     run(engine, hero, dir) {
       if (!isDir(dir)) return;
       const [dr, dc] = dir;
@@ -78,6 +95,26 @@ export const ABILITIES = {
   charge: {
     name: "Charge", glyph: "💨", directional: true, cost: 2, color: "#a855f7",
     desc: "Barrel in that direction until blocked, shoving whatever you hit. Moves the hero. Costs 2 actions.",
+    affected(engine, hero, dir) {
+      if (!isDir(dir)) return [];
+      const [dr, dc] = dir;
+      const cells = [];
+      let r = hero.row, c = hero.col;
+      // The lane the charge sweeps: forward until a wall/edge/lethal stop.
+      for (let step = 0; step < 64; step++) {
+        const nr = r + dr, nc = c + dc;
+        if (!engine._inBounds(nr, nc) || !terrain.isPassable(engine.gmap.terrain[nr][nc])) break;
+        cells.push([nr, nc]);
+        const occ = engine._occupant(nr, nc, hero);
+        if (occ) {
+          if (occ.kind === ENEMY && occ.lethalToHero && hero.invuln <= 0) break;
+          if (rankOf(hero.kind) <= rankOf(occ.kind)) break; // can't shove it: lane ends
+        }
+        if (terrain.effectOf(engine.gmap.terrain[nr][nc]) === terrain.DIE) break;
+        r = nr; c = nc;
+      }
+      return cells;
+    },
     run(engine, hero, dir) {
       if (!isDir(dir)) return;
       const [dr, dc] = dir;
@@ -104,6 +141,19 @@ export const ABILITIES = {
   whistle: {
     name: "Whistle", glyph: "📣", directional: true, cost: 2, color: "#10b981",
     desc: "Call the whole flock one tile in that direction (ignores their script this tick). Costs 2 actions.",
+    affected(engine, hero, dir) {
+      if (!isDir(dir)) return [];
+      const [dr, dc] = dir;
+      const cells = [];
+      // Every sheep, and the tile each one is called toward.
+      for (const e of engine.gmap.entities) {
+        if (e.alive && e.kind === SHEEP) {
+          cells.push([e.row, e.col]);
+          cells.push([e.row + dr, e.col + dc]);
+        }
+      }
+      return cells;
+    },
     run(engine, hero, dir) {
       if (!isDir(dir)) return;
       const [dr, dc] = dir;
@@ -126,6 +176,12 @@ export const ABILITIES = {
   blink: {
     name: "Blink", glyph: "✨", directional: true, cost: 2, color: "#06b6d4",
     desc: "Leap two tiles in that direction, over whatever's between. Lands on open ground. Costs 2 actions.",
+    affected(engine, hero, dir) {
+      if (!isDir(dir)) return [];
+      const [dr, dc] = dir;
+      // The tile leapt over and the landing tile.
+      return [[hero.row + dr, hero.col + dc], [hero.row + dr * 2, hero.col + dc * 2]];
+    },
     run(engine, hero, dir) {
       if (!isDir(dir)) return;
       const nr = hero.row + dir[0] * 2, nc = hero.col + dir[1] * 2;
@@ -143,6 +199,7 @@ export const ABILITIES = {
   shield: {
     name: "Invincible", glyph: "🛡️", directional: false, cost: 1, color: "#eab308",
     desc: "Become invincible for your next action — walk through a guard once. Fires instantly (1 action).",
+    affected(engine, hero) { return [[hero.row, hero.col]]; },
     run(engine, hero) { hero.invuln = Math.max(hero.invuln, 2); },
   },
 
@@ -151,6 +208,11 @@ export const ABILITIES = {
   freeze: {
     name: "Freeze", glyph: "❄️", directional: false, cost: 2, color: "#6366f1",
     desc: "Freeze every enemy — they skip their next move. Costs 2 actions.",
+    affected(engine, hero) {
+      return engine.gmap.entities
+        .filter((e) => e.alive && e.kind === ENEMY)
+        .map((e) => [e.row, e.col]);
+    },
     run(engine, hero) {
       for (const e of engine.gmap.entities) {
         if (e.alive && e.kind === ENEMY) e.skipNext = true;

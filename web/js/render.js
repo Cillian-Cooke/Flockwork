@@ -170,6 +170,10 @@ export function updateBoard(board, gmap, dying = []) {
   // Expose the visible set so the move-preview can clip dots to what's in sight.
   board.visible = newVisible;
 
+  // Tiles an ability touched on this tick — flashed red, only while this tick
+  // is the one on screen (board.abilityFx is reset every render in main.js).
+  const fxSet = new Set((board.abilityFx || []).map(([r, c]) => `${r},${c}`));
+
   // Update animation targets
   for (const key of newVisible) {
     const existing = animCells.get(key);
@@ -197,6 +201,7 @@ export function updateBoard(board, gmap, dying = []) {
       cell.div.dataset.worldC = wc;
       cell.div.dataset.terrain = inVision ? gmap.terrain[wr][wc] : "?"; // "?" = unseen
       cell.div.classList.toggle('fog', !inVision);
+      cell.div.classList.toggle('fx-ability', inVision && fxSet.has(`${wr},${wc}`));
 
       // Entity overlay (only what you can see)
       cell.div.classList.remove('ent-hero', 'ent-enemy', 'ent-sheep', 'blocked', 'barrier', 'charging');

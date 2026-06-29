@@ -42,9 +42,11 @@ export class Engine {
     gmap.entities.forEach((e, i) => this._index.set(e, i));
     this._portals = this._findPortals();
     this._crackState = new Map(); // "r,c" -> remaining traversals on a cracking tile
+    this._fx = []; // cells [r,c] an ability touched on the most recent step (telegraph)
   }
 
   step(playerToken) {
+    this._fx = []; // reset each tick — the FX belongs only to this action
     const living = this.gmap.entities.filter((e) => e.alive);
     const actions = new Map();
     const classified = new Map();
@@ -136,6 +138,16 @@ export class Engine {
     this._index.set(entity, this.gmap.entities.length - 1);
   }
 
+  // Telegraph: ask an ability which tiles it acts on (computed from the PRE-run
+  // state, since run() mutates positions) and stash the in-bounds ones so the UI
+  // can flash them for this one tick. Read-only; never affects the simulation.
+  _recordFx(ability, hero, dir) {
+    if (typeof ability.affected !== "function") return;
+    let cells = [];
+    try { cells = ability.affected(this, hero, dir) || []; } catch { cells = []; }
+    for (const [r, c] of cells) if (this._inBounds(r, c)) this._fx.push([r, c]);
+  }
+
   // --- abilities (modular, 3-slot loadout) --------------------------------
 
   // A slot token arms a directional ability (which must be followed immediately
@@ -155,6 +167,7 @@ export class Engine {
         e.armedAbility = null;
         if (kind === "move") {
           const [, dir] = classified.get(e);
+          this._recordFx(armed, e, dir);
           armed.run(this, e, dir);
           classified.set(e, ["wait", [0, 0]]); // the move is consumed by the ability
           continue;
@@ -167,7 +180,7 @@ export class Engine {
         const ab = id && ABILITIES[id];
         if (!ab) continue;
         if (ab.directional) e.armedAbility = id;
-        else ab.run(this, e, [0, 0]);
+        else { this._recordFx(ab, e, [0, 0]); ab.run(this, e, [0, 0]); }
       }
     }
   }
