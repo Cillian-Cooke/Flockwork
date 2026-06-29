@@ -294,6 +294,11 @@ export function updateBoard(board, gmap, dying = []) {
       }
     }
   }
+
+  // State/scroll changed → repaint every cell once next frame, and wake the rAF
+  // loop if it went idle (it sleeps when nothing is animating — big mobile win).
+  board.repaint = true;
+  startRafLoop(board);
 }
 
 // --- move-preview ghost path -------------------------------------------------
@@ -323,124 +328,139 @@ export function renderPathPreview(board, dots) {
 
 // --- rAF render loop ---------------------------------------------------------
 
+// Start (or wake) the board's render loop. Idempotent: a no-op if already running.
+// The loop only redraws cells whose pixels actually change and STOPS itself when
+// nothing is animating, so a settled board costs ~0 — it's woken again by
+// updateBoard()'s repaint. This is the main mobile-performance lever.
 export function startRafLoop(board) {
-  let lastTs = 0;
+  board.stopped = false;
+  if (board._rafId != null) return;
+  board._lastTs = 0;
+  board._rafId = requestAnimationFrame(ts => frame(board, ts));
+}
 
-  function frame(ts) {
-    if (board.stopped) return;
+function clearCanvas(cell) {
+  cell.ctx.clearRect(0, 0, cell.canvas.width, cell.canvas.height);
+}
 
-    const dt = lastTs ? Math.min((ts - lastTs) / 1000, 0.05) : 0;
-    lastTs = ts;
+function frame(board, ts) {
+  board._rafId = null;
+  if (board.stopped) return;
 
-    const { cells, rows, cols, animCells, gmap, filmstrips, originRow, originCol } = board;
+  const dt = board._lastTs ? Math.min((ts - board._lastTs) / 1000, 0.05) : 0;
+  board._lastTs = ts;
 
-    // Clear all cell canvases first
-    for (let i = 0; i < rows; i++) {
-      for (let j = 0; j < cols; j++) {
-        const { ctx, canvas } = cells[i][j];
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const { cells, rows, cols, animCells, gmap, filmstrips, originRow, originCol } = board;
+  if (!gmap) { board._rafId = requestAnimationFrame(t => frame(board, t)); return; }
+
+  // A repaint (set by updateBoard) clears everything once so re-mapped/now-void
+  // screen cells don't keep stale pixels; idle frames clear only what they redraw.
+  const full = !!board.repaint;
+  board.repaint = false;
+  if (full) for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) clearCanvas(cells[i][j]);
+
+  const gateOpen = gmap.entities.some(
+    e => e.alive && terrain.effectOf(gmap.terrain[e.row]?.[e.col]) === terrain.PLATE);
+
+  let active = false; // any cell still animating → keep looping next frame
+
+  for (const [key, anim] of animCells) {
+    const spd = anim.speed ?? ANIM_SPEED_DEFAULT;
+    let revealing = false;
+    if (anim.target === 1 && (anim.delay ?? 0) > 0) { anim.delay -= dt; revealing = true; }
+    else if (anim.target === 1 && anim.progress < 1) { anim.progress = Math.min(1, anim.progress + spd * dt); revealing = true; }
+    else if (anim.target === 0 && anim.progress > 0) { anim.progress = Math.max(0, anim.progress - spd * dt); revealing = true; }
+
+    const commaIdx = key.indexOf(',');
+    const wr = Number(key.slice(0, commaIdx));
+    const wc = Number(key.slice(commaIdx + 1));
+    const si = wr - originRow, sj = wc - originCol;
+    const onScreen = si >= 0 && si < rows && sj >= 0 && sj < cols;
+
+    if (anim.progress <= 0.001 && anim.target === 0) {
+      if (onScreen) clearCanvas(cells[si][sj]); // faded out of sight → wipe it
+      animCells.delete(key);
+      continue;
+    }
+    if (!onScreen) continue;
+
+    const terrainId = gmap.terrain[wr][wc];
+    const cell = cells[si][sj];
+    const { ctx, canvas } = cell;
+    const p = anim.progress;
+    const isGate = terrain.effectOf(terrainId) === terrain.GATE;
+    const cfg = ANIM_TERRAIN.get(terrainId);
+    const hasStrip = filmstrips && filmstrips.has(terrainId);
+
+    let frameIdx = -1, alpha = 1, gateMoving = false;
+
+    if (isGate && hasStrip) {
+      const strip = filmstrips.get(terrainId);
+      const tgt = gateOpen ? 0 : 1;           // 0 = open (grass), 1 = locked (end)
+      if (anim.gate == null) anim.gate = tgt; // start settled in the current state
+      const gs = dt / 0.45;                   // ~0.45 s to open/close
+      if (anim.gate < tgt) { anim.gate = Math.min(tgt, anim.gate + gs); gateMoving = true; }
+      else if (anim.gate > tgt) { anim.gate = Math.max(tgt, anim.gate - gs); gateMoving = true; }
+      // Stop a touch short of the detected open frame so opening doesn't rewind
+      // too far into the draw-in. Scale by the reveal so it also draws IN.
+      const openF = Math.min(strip.topIdx, (strip.openIdx ?? 0) + 2);
+      const stateFrame = openF + anim.gate * (strip.topIdx - openF);
+      frameIdx = Math.round((p < 1 ? p : 1) * stateFrame);
+    } else if (hasStrip) {
+      const strip = filmstrips.get(terrainId);
+      if (p < 1) {
+        frameIdx = Math.round(p * strip.topIdx);      // animate IN (draw-in)
+      } else if (cfg) {
+        const cycle = strip.durSec || 1;              // keep animating (e.g. lava)
+        anim.phase = ((anim.phase ?? 0) + dt / cycle) % 1;
+        let t = anim.phase;
+        if (cfg.pingpong) t = 1 - Math.abs(t * 2 - 1);
+        const loF = Math.round(cfg.lo * strip.topIdx), hiF = Math.round(cfg.hi * strip.topIdx);
+        frameIdx = loF + Math.round(t * (hiF - loF));
+      } else {
+        frameIdx = strip.topIdx;                      // stationary, grown
       }
+    } else if (terrainId !== 0 && TERRAIN_FALLBACK[terrainId]) {
+      frameIdx = -2; alpha = Math.min(1, p * 2);      // flat-colour fallback (fades in)
     }
 
-    if (!gmap) { requestAnimationFrame(frame); return; }
+    // Does this cell still need redrawing on future frames?
+    const animating = revealing || gateMoving || (p >= 1 && !!cfg);
+    if (animating) active = true;
 
-    // Gates open while ANY alive entity stands on a pressure plate (matches the
-    // engine's _gatesOpen). Drives the gate riv: locked when shut, grass when open.
-    const gateOpen = gmap.entities.some(
-      e => e.alive && terrain.effectOf(gmap.terrain[e.row]?.[e.col]) === terrain.PLATE);
+    // Skip the redraw entirely if the cell's pixels are unchanged since last time.
+    const drawKey = frameIdx === -2
+      ? `${si},${sj},c${terrainId},${Math.round(alpha * 30)}`
+      : `${si},${sj},${frameIdx}`;
+    if (!full && !animating && drawKey === anim._k) continue;
+    anim._k = drawKey;
 
-    // Advance progress and draw each animated world tile
-    for (const [key, anim] of animCells) {
-      // Advance toward target at this cell's own random speed
-      const spd = anim.speed ?? ANIM_SPEED_DEFAULT;
-      if (anim.target === 1 && (anim.delay ?? 0) > 0) {
-        anim.delay -= dt; // hold blank until this tile's staggered start
-      } else if (anim.target === 1 && anim.progress < 1) {
-        anim.progress = Math.min(1, anim.progress + spd * dt);
-      } else if (anim.target === 0 && anim.progress > 0) {
-        anim.progress = Math.max(0, anim.progress - spd * dt);
+    if (!full) clearCanvas(cell); // (a full repaint already cleared every cell)
+
+    if (frameIdx === -2) {
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = TERRAIN_FALLBACK[terrainId];
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.globalAlpha = 1;
+    } else if (frameIdx >= 0) {
+      const img = filmstrips.get(terrainId).frames[frameIdx];
+      const dir = !isGate && terrain.conveyorDir(terrainId); // belt art points UP
+      if (dir) {
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate(Math.atan2(dir[1], -dir[0]));
+        ctx.drawImage(img, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height);
+        ctx.restore();
+      } else {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       }
-
-      if (anim.progress <= 0.001 && anim.target === 0) {
-        animCells.delete(key);
-        continue;
-      }
-
-      // Map the world tile into the current window (origin + screen offset).
-      const commaIdx = key.indexOf(',');
-      const wr = Number(key.slice(0, commaIdx));
-      const wc = Number(key.slice(commaIdx + 1));
-      const si = wr - originRow, sj = wc - originCol;
-      if (si < 0 || si >= rows || sj < 0 || sj >= cols) continue;
-
-      const terrainId = gmap.terrain[wr][wc];
-      const { ctx, canvas } = cells[si][sj];
-      const p = anim.progress; // 0→1 reveal: drives the tile's draw-IN animation
-      const alpha = Math.min(1, p * 2); // only the flat-colour fallback fades
-
-      const isGate = terrain.effectOf(terrainId) === terrain.GATE;
-
-      if (isGate && filmstrips && filmstrips.has(terrainId)) {
-        // The gate doesn't loop — it animates to its locked end when shut and
-        // back to its open (grass) start when a plate is pressed.
-        const strip = filmstrips.get(terrainId);
-        const tgt = gateOpen ? 0 : 1;          // 0 = open (grass), 1 = locked (end)
-        if (anim.gate == null) anim.gate = tgt; // start settled in the current state
-        const gs = dt / 0.45;                   // ~0.45 s to open/close
-        if (anim.gate < tgt) anim.gate = Math.min(tgt, anim.gate + gs);
-        else if (anim.gate > tgt) anim.gate = Math.max(tgt, anim.gate - gs);
-        // Frame for the current state, scaled by the reveal so it also draws IN.
-        // Stop a touch short of the detected open frame so it doesn't rewind too
-        // far (back into the draw-in) when opening.
-        const openF = Math.min(strip.topIdx, (strip.openIdx ?? 0) + 2);
-        const stateFrame = openF + anim.gate * (strip.topIdx - openF);
-        const frameIdx = Math.round((p < 1 ? p : 1) * stateFrame);
-        ctx.drawImage(strip.frames[frameIdx], 0, 0, canvas.width, canvas.height);
-      } else if (filmstrips && filmstrips.has(terrainId)) {
-        const strip = filmstrips.get(terrainId);
-        // On reveal a tile plays its draw-IN once (frame 0 → grown). After that it
-        // holds the grown frame (stationary) unless it's in ANIM_TERRAIN, which
-        // keeps looping/oscillating within its configured [lo, hi] band.
-        let frameIdx;
-        const cfg = ANIM_TERRAIN.get(terrainId);
-        if (p < 1) {
-          frameIdx = Math.round(p * strip.topIdx); // animate IN
-        } else if (cfg) {
-          // Keep animating after it's drawn in: oscillate/loop within [lo, hi].
-          const cycle = strip.durSec || 1;
-          anim.phase = ((anim.phase ?? 0) + dt / cycle) % 1;
-          let t = anim.phase;
-          if (cfg.pingpong) t = 1 - Math.abs(t * 2 - 1); // 0→1→0 triangle (gentle pulse)
-          const loF = Math.round(cfg.lo * strip.topIdx);
-          const hiF = Math.round(cfg.hi * strip.topIdx);
-          frameIdx = loF + Math.round(t * (hiF - loF));
-        } else {
-          frameIdx = strip.topIdx; // stationary
-        }
-        const img = strip.frames[frameIdx];
-        const dir = terrain.conveyorDir(terrainId); // belt art points UP → rotate per arrow
-        if (dir) {
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate(Math.atan2(dir[1], -dir[0]));
-          ctx.drawImage(img, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height);
-          ctx.restore();
-        } else {
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        }
-      } else if (terrainId !== 0 && TERRAIN_FALLBACK[terrainId]) {
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = TERRAIN_FALLBACK[terrainId];
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.globalAlpha = 1;
-      }
-      // terrain 0 = void: canvas stays clear → dark cell background visible
     }
-
-    requestAnimationFrame(frame);
+    // terrain 0 / no strip: nothing drawn (canvas already cleared) → void shows through
   }
 
-  requestAnimationFrame(frame);
+  // Keep looping only while something is animating; otherwise sleep until the
+  // next updateBoard() repaint wakes us.
+  if (active) board._rafId = requestAnimationFrame(t => frame(board, t));
 }
 
 // --- chat log helpers --------------------------------------------------------

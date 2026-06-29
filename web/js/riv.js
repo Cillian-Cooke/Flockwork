@@ -30,7 +30,7 @@ export const TERRAIN_RIV = {
 // gentle pulse instead of a hard loop-restart. (Gates animate by state regardless.)
 //   id -> { lo, hi, pingpong }
 export const ANIM_TERRAIN = new Map([
-  [3, { lo: 0.8, hi: 1.0, pingpong: true }], // lava simmers between 80% and 100%
+  [3, { lo: 0.6, hi: 1.0, pingpong: true }], // lava simmers between 60% and 100%
 ]);
 
 // UI action animations (move arrows + wait), pre-rendered like the terrain.

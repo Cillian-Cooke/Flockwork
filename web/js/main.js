@@ -347,8 +347,8 @@ function drawStripFrame(cv, strip, fi, rot = 0) {
 }
 // Play a strip's intro once (frame 0 → grown frame) then hold. Self-cancels, so
 // rebuilding the hotbar never leaks rAFs.
-function animateStripOnce(cv, strip, rot = 0) {
-  const start = performance.now(), cyc = strip.durSec || 0.5;
+function animateStripOnce(cv, strip, rot = 0, dur) {
+  const start = performance.now(), cyc = dur || strip.durSec || 0.5;
   function step(now) {
     const p = Math.min(1, ((now - start) / 1000) / cyc);
     drawStripFrame(cv, strip, Math.floor(p * strip.topIdx), rot);
@@ -357,18 +357,8 @@ function animateStripOnce(cv, strip, rot = 0) {
   requestAnimationFrame(step);
 }
 
-// Continuously loop a strip into a canvas (used by the Move-pad buttons).
-function loopStripCanvas(cv, strip, rot, period) {
-  const start = performance.now();
-  function step(now) {
-    const t = (((now - start) / 1000) / period) % 1;
-    drawStripFrame(cv, strip, Math.floor(t * strip.topIdx), rot);
-    requestAnimationFrame(step);
-  }
-  requestAnimationFrame(step);
-}
-
-// The Move-pad buttons ARE the animation — no box, no letter — looping fast.
+// The Move-pad buttons ARE the animation — no box, no letter. They rest on the
+// arrow and play their animation once (fast) only when pressed — no idle loop.
 function initActionButtons() {
   if (!actionStrips) return;
   document.querySelectorAll(".pad-grid .ctl[data-dir], .pad-grid .wait-btn").forEach(btn => {
@@ -381,7 +371,8 @@ function initActionButtons() {
     cv.width = cv.height = Math.round(48 * DPR);
     btn.classList.add("has-riv");
     btn.insertBefore(cv, btn.firstChild);
-    loopStripCanvas(cv, strip, rot, 0.45); // fast continuous loop
+    drawStripFrame(cv, strip, strip.topIdx, rot);                 // static resting arrow
+    btn.addEventListener("pointerdown", () => animateStripOnce(cv, strip, rot, 0.28)); // fast play on press
   });
 }
 
