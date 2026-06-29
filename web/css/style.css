@@ -824,10 +824,17 @@ body {
 
 /* Animated arrow / wait riv on the Move-pad buttons (replaces the static
    data-dir arrow; the small key letter stays beneath it). */
+/* Move-pad action buttons: just the looping animation — no box, no letter. */
 .pad-grid .ctl.has-riv[data-dir]::before { content: none; }
-.pad-grid .ctl .btn-anim { width: 30px; height: 30px; display: block; pointer-events: none; }
-.pad-grid .wait-btn.has-riv > span { display: none; }
-.pad-grid .wait-btn .btn-anim { width: 34px; height: 34px; }
+.pad-grid .ctl.has-riv > span { display: none; }
+.pad-grid .ctl.has-riv,
+.pad-grid .ctl.has-riv:hover,
+.pad-grid .ctl.has-riv:active {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.pad-grid .ctl .btn-anim { width: 100%; height: 100%; display: block; pointer-events: none; }
 
 /* Charge link: the 'r' tile that arms a charge, every tile while it's armed,
    and the move tile that finally fires it — see annotateCharges() in main.js */

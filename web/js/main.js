@@ -357,8 +357,18 @@ function animateStripOnce(cv, strip, rot = 0) {
   requestAnimationFrame(step);
 }
 
-// Put the animated arrow / wait riv onto the Move-pad buttons: a clear resting
-// arrow that replays its draw-in animation whenever the button is pressed.
+// Continuously loop a strip into a canvas (used by the Move-pad buttons).
+function loopStripCanvas(cv, strip, rot, period) {
+  const start = performance.now();
+  function step(now) {
+    const t = (((now - start) / 1000) / period) % 1;
+    drawStripFrame(cv, strip, Math.floor(t * strip.topIdx), rot);
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+// The Move-pad buttons ARE the animation — no box, no letter — looping fast.
 function initActionButtons() {
   if (!actionStrips) return;
   document.querySelectorAll(".pad-grid .ctl[data-dir], .pad-grid .wait-btn").forEach(btn => {
@@ -369,10 +379,9 @@ function initActionButtons() {
     const cv = document.createElement("canvas");
     cv.className = "btn-anim";
     cv.width = cv.height = Math.round(48 * DPR);
-    drawStripFrame(cv, strip, strip.topIdx, rot);
     btn.classList.add("has-riv");
     btn.insertBefore(cv, btn.firstChild);
-    btn.addEventListener("pointerdown", () => animateStripOnce(cv, strip, rot));
+    loopStripCanvas(cv, strip, rot, 0.45); // fast continuous loop
   });
 }
 

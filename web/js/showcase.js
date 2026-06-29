@@ -269,8 +269,10 @@ function drawTerrainTile(ctx, id, S, gateOpen = false) {
   const conv = terrain.conveyorDir(id); // belt art points UP → rotate per arrow
   if (strip) {
     if (terrain.effectOf(id) === terrain.GATE) {
-      // Gate: locked (end frame) when shut, open/grass frame when a plate is held.
-      ctx.drawImage(strip.frames[gateOpen ? (strip.openIdx ?? 0) : strip.topIdx], 0, 0, S, S);
+      // Gate: locked (end frame) when shut, open/grass frame when a plate is held
+      // (a touch past openIdx so it doesn't sit in the draw-in).
+      const openF = Math.min(strip.topIdx, (strip.openIdx ?? 0) + 2);
+      ctx.drawImage(strip.frames[gateOpen ? openF : strip.topIdx], 0, 0, S, S);
       return;
     }
     if (conv) {

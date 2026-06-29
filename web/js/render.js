@@ -4,7 +4,7 @@ import * as terrain from "./terrain.js";
 import { ROUND_LENGTH } from "./tokens.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
 import { loopSummary } from "./game.js";
-import { TERRAIN_FALLBACK, LOOP_TERRAIN } from "./riv.js";
+import { TERRAIN_FALLBACK, ANIM_TERRAIN } from "./riv.js";
 
 const ANIM_SPEED_DEFAULT = 1 / 1.0; // fallback; each cell gets its own random speed
 
@@ -186,11 +186,14 @@ export function updateBoard(board, gmap, dying = []) {
     if (existing) {
       existing.target = 1;
     } else {
-      const dur = 0.8 + Math.random() * 0.4; // random 0.8–1.2 s fade-in reveal
-      // `phase` is a random starting point in the tile's looping animation, so
-      // tiles of the same terrain don't all play in lock-step — the board feels
-      // alive instead of pulsing in unison.
-      animCells.set(key, { progress: 0, target: 1, speed: 1 / dur, phase: Math.random() });
+      // Vary BOTH the draw-in speed and a small start delay so tiles don't all
+      // animate in together — they stagger in at different times and rates.
+      const dur = 0.5 + Math.random() * 1.1; // 0.5–1.6 s draw-in
+      animCells.set(key, {
+        progress: 0, target: 1, speed: 1 / dur,
+        delay: Math.random() * 0.7,          // 0–0.7 s staggered start
+        phase: Math.random(),                // random point in any post-reveal loop
+      });
     }
   }
   for (const [key, anim] of animCells) {
@@ -350,7 +353,9 @@ export function startRafLoop(board) {
     for (const [key, anim] of animCells) {
       // Advance toward target at this cell's own random speed
       const spd = anim.speed ?? ANIM_SPEED_DEFAULT;
-      if (anim.target === 1 && anim.progress < 1) {
+      if (anim.target === 1 && (anim.delay ?? 0) > 0) {
+        anim.delay -= dt; // hold blank until this tile's staggered start
+      } else if (anim.target === 1 && anim.progress < 1) {
         anim.progress = Math.min(1, anim.progress + spd * dt);
       } else if (anim.target === 0 && anim.progress > 0) {
         anim.progress = Math.max(0, anim.progress - spd * dt);
@@ -385,26 +390,32 @@ export function startRafLoop(board) {
         if (anim.gate < tgt) anim.gate = Math.min(tgt, anim.gate + gs);
         else if (anim.gate > tgt) anim.gate = Math.max(tgt, anim.gate - gs);
         // Frame for the current state, scaled by the reveal so it also draws IN.
-        const openF = strip.openIdx ?? 0;
+        // Stop a touch short of the detected open frame so it doesn't rewind too
+        // far (back into the draw-in) when opening.
+        const openF = Math.min(strip.topIdx, (strip.openIdx ?? 0) + 2);
         const stateFrame = openF + anim.gate * (strip.topIdx - openF);
         const frameIdx = Math.round((p < 1 ? p : 1) * stateFrame);
         ctx.drawImage(strip.frames[frameIdx], 0, 0, canvas.width, canvas.height);
       } else if (filmstrips && filmstrips.has(terrainId)) {
         const strip = filmstrips.get(terrainId);
         // On reveal a tile plays its draw-IN once (frame 0 → grown). After that it
-        // holds the grown frame (stationary) unless opted into LOOP_TERRAIN, which
-        // cycles its fully-drawn band [loIdx, topIdx] at the riv's own duration.
+        // holds the grown frame (stationary) unless it's in ANIM_TERRAIN, which
+        // keeps looping/oscillating within its configured [lo, hi] band.
         let frameIdx;
+        const cfg = ANIM_TERRAIN.get(terrainId);
         if (p < 1) {
           frameIdx = Math.round(p * strip.topIdx); // animate IN
-        } else if (LOOP_TERRAIN.has(terrainId)) {
+        } else if (cfg) {
+          // Keep animating after it's drawn in: oscillate/loop within [lo, hi].
           const cycle = strip.durSec || 1;
           anim.phase = ((anim.phase ?? 0) + dt / cycle) % 1;
-          const lo = strip.loIdx ?? strip.topIdx;
-          const span = strip.topIdx - lo + 1;
-          frameIdx = lo + Math.min(span - 1, Math.floor(anim.phase * span));
+          let t = anim.phase;
+          if (cfg.pingpong) t = 1 - Math.abs(t * 2 - 1); // 0→1→0 triangle (gentle pulse)
+          const loF = Math.round(cfg.lo * strip.topIdx);
+          const hiF = Math.round(cfg.hi * strip.topIdx);
+          frameIdx = loF + Math.round(t * (hiF - loF));
         } else {
-          frameIdx = strip.topIdx;
+          frameIdx = strip.topIdx; // stationary
         }
         const img = strip.frames[frameIdx];
         const dir = terrain.conveyorDir(terrainId); // belt art points UP → rotate per arrow

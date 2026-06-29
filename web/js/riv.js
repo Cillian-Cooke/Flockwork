@@ -24,11 +24,14 @@ export const TERRAIN_RIV = {
   25: 'Locked tile.riv',    // gate — frame 0 = open (grass), end = locked
 };
 
-// Terrain IDs that are ALLOWED to loop their animation continuously on the board.
-// Everything else holds a single grown frame (stationary) — add an id here to opt
-// a tile into constant animation. (Gates are state-driven and animate regardless.)
-//   e.g. new Set([1, 8, 16, 17, 18, 19]) -> grass, water, conveyors loop
-export const LOOP_TERRAIN = new Set([]);
+// Tiles that keep animating AFTER they've drawn in. Everything else holds its
+// grown frame (stationary). Each entry loops the frames between `lo` and `hi`
+// (fractions of the animation, 0..1); `pingpong` oscillates back and forth for a
+// gentle pulse instead of a hard loop-restart. (Gates animate by state regardless.)
+//   id -> { lo, hi, pingpong }
+export const ANIM_TERRAIN = new Map([
+  [3, { lo: 0.8, hi: 1.0, pingpong: true }], // lava simmers between 80% and 100%
+]);
 
 // UI action animations (move arrows + wait), pre-rendered like the terrain.
 export const ACTION_RIV = {
