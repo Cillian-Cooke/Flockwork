@@ -266,7 +266,7 @@ function runDemo(spec) {
 function drawTerrainTile(ctx, id, S, gateOpen = false) {
   ctx.clearRect(0, 0, S, S);
   const strip = _filmstrips && _filmstrips.get(id);
-  const conv = terrain.conveyorDir(id); // belt base points right → rotate per arrow
+  const conv = terrain.conveyorDir(id); // belt art points UP → rotate per arrow
   if (strip) {
     if (terrain.effectOf(id) === terrain.GATE) {
       // Gate: locked (end frame) when shut, open/grass frame when a plate is held.
@@ -276,7 +276,7 @@ function drawTerrainTile(ctx, id, S, gateOpen = false) {
     if (conv) {
       ctx.save();
       ctx.translate(S / 2, S / 2);
-      ctx.rotate(Math.atan2(conv[0], conv[1]));
+      ctx.rotate(Math.atan2(conv[1], -conv[0]));
       ctx.drawImage(strip.frames[strip.topIdx], -S / 2, -S / 2, S, S);
       ctx.restore();
     } else {

@@ -10,7 +10,7 @@ const FRAMES = 24;
 // terrain ID → .riv filename
 export const TERRAIN_RIV = {
   1: 'Grass.riv',
-  2: 'Trees.riv',
+  2: 'Wall.riv',           // wall (Trees.riv is now free for another tile)
   3: 'Lava.riv',
   4: 'Ice.riv',
   5: 'mud.riv',          // skip — new mud animation
@@ -164,10 +164,13 @@ export async function loadFilmstrips(strips, onEach) {
   for (const [id, name] of Object.entries(TERRAIN_RIV)) {
     if (!byName.has(name)) {
       await nextIdle();
-      byName.set(name, await loadStrip(name));
+      // A missing/broken .riv must not abort the whole map — that tile just falls
+      // back to its flat colour until the file is added.
+      try { byName.set(name, await loadStrip(name)); }
+      catch (err) { console.warn(`tile riv "${name}" failed to load:`, err); byName.set(name, null); }
     }
-    strips.set(Number(id), byName.get(name));
-    if (onEach) onEach(Number(id), byName.get(name));
+    const strip = byName.get(name);
+    if (strip) { strips.set(Number(id), strip); if (onEach) onEach(Number(id), strip); }
   }
   return strips;
 }

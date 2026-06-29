@@ -370,10 +370,8 @@ export function startRafLoop(board) {
 
       const terrainId = gmap.terrain[wr][wc];
       const { ctx, canvas } = cells[si][sj];
-      const p = anim.progress;
-      // `progress` is only the fog-reveal fade now; the animation itself loops
-      // continuously via `phase` so the board keeps moving.
-      const alpha = Math.min(1, p * 2);
+      const p = anim.progress; // 0→1 reveal: drives the tile's draw-IN animation
+      const alpha = Math.min(1, p * 2); // only the flat-colour fallback fades
 
       const isGate = terrain.effectOf(terrainId) === terrain.GATE;
 
@@ -386,38 +384,39 @@ export function startRafLoop(board) {
         const gs = dt / 0.45;                   // ~0.45 s to open/close
         if (anim.gate < tgt) anim.gate = Math.min(tgt, anim.gate + gs);
         else if (anim.gate > tgt) anim.gate = Math.max(tgt, anim.gate - gs);
-        // Interpolate between the open (grass) frame and the locked end frame.
+        // Frame for the current state, scaled by the reveal so it also draws IN.
         const openF = strip.openIdx ?? 0;
-        const frameIdx = Math.round(openF + anim.gate * (strip.topIdx - openF));
-        ctx.globalAlpha = alpha;
+        const stateFrame = openF + anim.gate * (strip.topIdx - openF);
+        const frameIdx = Math.round((p < 1 ? p : 1) * stateFrame);
         ctx.drawImage(strip.frames[frameIdx], 0, 0, canvas.width, canvas.height);
-        ctx.globalAlpha = 1;
       } else if (filmstrips && filmstrips.has(terrainId)) {
         const strip = filmstrips.get(terrainId);
-        // Tiles are STATIONARY (hold the grown frame) unless opted into constant
-        // animation via LOOP_TERRAIN. Looping tiles cycle within their fully-drawn
-        // band [loIdx, topIdx], at the riv's own duration.
-        let frameIdx = strip.topIdx;
-        if (LOOP_TERRAIN.has(terrainId)) {
+        // On reveal a tile plays its draw-IN once (frame 0 → grown). After that it
+        // holds the grown frame (stationary) unless opted into LOOP_TERRAIN, which
+        // cycles its fully-drawn band [loIdx, topIdx] at the riv's own duration.
+        let frameIdx;
+        if (p < 1) {
+          frameIdx = Math.round(p * strip.topIdx); // animate IN
+        } else if (LOOP_TERRAIN.has(terrainId)) {
           const cycle = strip.durSec || 1;
           anim.phase = ((anim.phase ?? 0) + dt / cycle) % 1;
           const lo = strip.loIdx ?? strip.topIdx;
           const span = strip.topIdx - lo + 1;
           frameIdx = lo + Math.min(span - 1, Math.floor(anim.phase * span));
+        } else {
+          frameIdx = strip.topIdx;
         }
         const img = strip.frames[frameIdx];
-        ctx.globalAlpha = alpha;
-        const dir = terrain.conveyorDir(terrainId); // belt base points right → rotate per arrow
+        const dir = terrain.conveyorDir(terrainId); // belt art points UP → rotate per arrow
         if (dir) {
           ctx.save();
           ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate(Math.atan2(dir[0], dir[1]));
+          ctx.rotate(Math.atan2(dir[1], -dir[0]));
           ctx.drawImage(img, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height);
           ctx.restore();
         } else {
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         }
-        ctx.globalAlpha = 1;
       } else if (terrainId !== 0 && TERRAIN_FALLBACK[terrainId]) {
         ctx.globalAlpha = alpha;
         ctx.fillStyle = TERRAIN_FALLBACK[terrainId];
