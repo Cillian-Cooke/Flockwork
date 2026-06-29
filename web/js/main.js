@@ -3,12 +3,12 @@
 import { simulateTo, parseMoves, setActiveLevel, getActiveLevel, tracePath, setSwaps, pendingSwapInfo } from "./game.js";
 import { buildGameMap, MapError } from "./mapdata.js";
 import { initBoard, updateBoard, startRafLoop, buildInitialLog, buildTickEntries, renderPathPreview, clearPathPreview } from "./render.js";
-import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf, isMoveToken, AIM_TOKEN, LOCK_TOKEN } from "./tokens.js";
+import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf, isMoveToken, AIM_TOKEN, LOCK_TOKEN, MOVE_TOKENS, WAIT_TOKEN } from "./tokens.js";
 import { describeTerrain, effectOf, DIE } from "./terrain.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
 import { ABILITIES, lockAfter, normalizeLoadout, SLOTS } from "./abilities.js";
-import { initRiv, buildFilmstrips, playYouLose } from "./riv.js";
-import { initShowcase, mountShowcase, DEMOS } from "./showcase.js";
+import { initRiv, buildFilmstrips, buildActionStrips, playYouLose } from "./riv.js";
+import { initShowcase, mountBoard, mountIcon, DEMOS } from "./showcase.js";
 import { buildShareText, computeScore } from "./share.js";
 
 // The loaded hero's ability loadout (3 slots) — drives the ability buttons and
@@ -36,6 +36,7 @@ let dailyDayIndex = null;  // index of map currently being played (null = not in
 let board         = null;
 let riveModule    = null;
 let filmstrips    = null;
+let actionStrips  = null;   // { arrow, wait } UI animations (move buttons + hotbar tiles)
 let youLosePlayed = false;
 let endShown      = false;
 
@@ -324,7 +325,59 @@ function centerCurrentDot(smooth) {
   applyWave();
 }
 
+// --- action animations (Direction Arrow / Nothing Action rivs) ------------
+
+// The arrow riv's base art points UP; rotate it to the token's direction.
+function tokenRotation(token) {
+  const d = MOVE_TOKENS[token];
+  return d ? Math.atan2(d[1], -d[0]) : 0;
+}
+// Draw a single (optionally rotated) frame of a strip into a canvas.
+function drawStripFrame(cv, strip, fi, rot = 0) {
+  const ctx = cv.getContext("2d"), s = cv.width;
+  ctx.clearRect(0, 0, s, s);
+  const img = strip.frames[Math.max(0, Math.min(strip.frames.length - 1, fi))];
+  ctx.save();
+  if (rot) { ctx.translate(s / 2, s / 2); ctx.rotate(rot); ctx.drawImage(img, -s / 2, -s / 2, s, s); }
+  else ctx.drawImage(img, 0, 0, s, s);
+  ctx.restore();
+}
+// Play a strip's intro once (frame 0 → grown frame) then hold. Self-cancels, so
+// rebuilding the hotbar never leaks rAFs.
+function animateStripOnce(cv, strip, rot = 0) {
+  const start = performance.now(), cyc = strip.durSec || 0.5;
+  function step(now) {
+    const p = Math.min(1, ((now - start) / 1000) / cyc);
+    drawStripFrame(cv, strip, Math.floor(p * strip.topIdx), rot);
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+// Put the animated arrow / wait riv onto the Move-pad buttons: a clear resting
+// arrow that replays its draw-in animation whenever the button is pressed.
+function initActionButtons() {
+  if (!actionStrips) return;
+  document.querySelectorAll(".pad-grid .ctl[data-dir], .pad-grid .wait-btn").forEach(btn => {
+    const token = btn.dataset.token;
+    const isWait = token === WAIT_TOKEN;
+    const strip = isWait ? actionStrips.wait : actionStrips.arrow;
+    const rot = isWait ? 0 : tokenRotation(token);
+    const cv = document.createElement("canvas");
+    cv.className = "btn-anim";
+    cv.width = cv.height = 48;
+    drawStripFrame(cv, strip, strip.topIdx, rot);
+    btn.classList.add("has-riv");
+    btn.insertBefore(cv, btn.firstChild);
+    btn.addEventListener("pointerdown", () => animateStripOnce(cv, strip, rot));
+  });
+}
+
 // --- hotbar ---------------------------------------------------------------
+
+// Index of the hotbar tile that should play its riv intro on the next render
+// (the one just added). Reset to -1 after each render.
+let _animateIndex = -1;
 
 function tileKind(token) {
   const [k] = classify(token);
@@ -413,13 +466,33 @@ function makeTile(token, tickNo, solid, index, info) {
 
   tile.className = classes.join(" ");
   tile.title = title;
-  tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${glyph}${badge}`;
+
+  // Plain move/wait tiles use the animated arrow / wait riv; the freshly-added
+  // tile (index === _animateIndex) replays its intro, the rest rest on the grown
+  // frame. Ability tiles keep their glyph.
+  const useRiv = actionStrips && role === undefined && (isMoveToken(token) || token === WAIT_TOKEN);
+  if (useRiv) {
+    tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${badge}`;
+    const strip = isMoveToken(token) ? actionStrips.arrow : actionStrips.wait;
+    const rot = isMoveToken(token) ? tokenRotation(token) : 0;
+    const cv = document.createElement("canvas");
+    cv.className = "tile-anim";
+    cv.width = cv.height = 40;
+    if (solid && index === _animateIndex) animateStripOnce(cv, strip, rot);
+    else drawStripFrame(cv, strip, strip.topIdx, rot);
+    tile.appendChild(cv);
+  } else {
+    tile.innerHTML = `<span class="tile-tick">${tickNo}</span>${glyph}${badge}`;
+  }
+
   // Only plain moves are draggable; ability blocks move as a unit (or not).
   if (solid && !isBlockRole(role)) tile.dataset.index = index;
   return tile;
 }
 
-function renderHotbar() {
+function renderHotbar(animateIndex = -1) {
+  _animateIndex = animateIndex;
+  hotbarEl.classList.remove("showcase-hotbar");
   hotbarEl.innerHTML = "";
   const n = currentMoves.length;
   if (n) {
@@ -438,6 +511,7 @@ function renderHotbar() {
     hotbarEl.appendChild(hint);
   }
   refreshLogJSON();
+  _animateIndex = -1;
 }
 
 // --- move management ------------------------------------------------------
@@ -454,6 +528,7 @@ function appendToken(token) {
   if (playing || playingThrough || !lastSnapshot) return;
   const slot = abilitySlotOf(token);
 
+  let addedIndex = -1; // which solid tile should play its riv intro
   if (slot >= 0) {
     // Pressing an ability reserves its whole footprint up-front: the cast, a
     // slot awaiting a direction (if directional), and lock slots for its cost.
@@ -469,15 +544,16 @@ function appendToken(token) {
     // a normal move appended at the end.
     const aimIdx = currentMoves.indexOf(AIM_TOKEN);
     if (aimIdx >= 0) currentMoves[aimIdx] = token;
-    else if (currentMoves.length < ROUND_LENGTH) currentMoves.push(token);
+    else if (currentMoves.length < ROUND_LENGTH) { currentMoves.push(token); addedIndex = currentMoves.length - 1; }
     else return;
   } else {
     // wait (or anything non-directional) just appends after whatever's queued
     if (currentMoves.length >= ROUND_LENGTH) return;
     currentMoves.push(token);
+    addedIndex = currentMoves.length - 1;
   }
 
-  renderHotbar();
+  renderHotbar(addedIndex);
   resetCurrentRound();
 }
 
@@ -1148,6 +1224,7 @@ function onPointerCancel() {
 }
 
 hotbarEl.addEventListener("pointerdown", e => {
+  if (inspecting) return; // hotbar mirrors the demo while inspecting — not editable
   const tile = e.target.closest(".tile.solid");
   if (!tile || dragSource !== null) return;
   if (tile.dataset.index === undefined) return; // ability-block tiles aren't draggable
@@ -1420,47 +1497,146 @@ boardEl.addEventListener("mousemove", e => {
 });
 boardEl.addEventListener("mouseleave", () => { tooltip.hidden = true; });
 
-// Desktop: click a tile/entity to open the animated card (the hover tooltip above
-// stays for quick peeks). Touch is handled by the tap logic further below.
+// Desktop: click a tile/entity to open the full inspect view (the hover tooltip
+// above stays for quick peeks). Touch is handled by the tap logic further below.
 boardEl.addEventListener("click", e => {
+  if (inspecting) return;
   const cell = e.target.closest(".cell");
-  const html = cell && cellInfoHTML(cell);
-  if (!html) return;
+  if (cell && demoKeyFor(cell)) enterInspect(cell);
+});
+
+// --- inspect mode: clicking/tapping a tile or entity takes over the game view --
+// The map slides away, a looping 5x5 demo of the thing plays in its place, the
+// controls drop down and a rich description panel rises in their stead, and the
+// hotbar is repurposed to mirror the demo's 10 actions (current one outlined).
+
+const stageEl       = document.querySelector(".board-stage");
+const showcaseStage = document.getElementById("showcase-stage");
+const inspectPanel  = document.getElementById("inspect-panel");
+const inspectBack   = document.getElementById("inspect-back");
+const inspectIconEl = document.getElementById("inspect-icon");
+const inspectTypeEl = document.getElementById("inspect-type");
+const inspectNameEl = document.getElementById("inspect-name");
+const inspectDescEl = document.getElementById("inspect-desc");
+
+let inspecting = false;
+let inspectBoard = null;
+let inspectExitTimer = 0;
+
+// Variant + clear, structured copy for the inspect panel (terrain or entity).
+function entityVariantName(e) {
+  if (e.kind === HERO) return "Hero";
+  if (e.kind === SHEEP) return "Sheep";
+  if (e.heavy) return "Boulder";
+  if (e.lethalToSheep && e.lethalToHero) return "Wolf";
+  if (e.lethalToHero) return "Guard";
+  return "Critter";
+}
+function describeEntityCard(e) {
+  const type = e.kind === HERO ? "Hero" : e.kind === SHEEP ? "Sheep" : "Enemy";
+  const name = entityVariantName(e) + (e.kind === HERO ? ` '${e.letter}'` : "");
+  let desc;
+  if (e.kind === HERO)
+    desc = "The piece you control. Queue its actions, then play them out. Walk into a sheep or a weaker enemy to push it — herd every sheep into a hazard to win.";
+  else if (e.kind === SHEEP)
+    desc = "The flock you must clear. Sheep follow a fixed path and move together as one — push or herd them into lava or the void. A wolf will eat any it reaches.";
+  else if (e.heavy)
+    desc = "A heavy block. It follows its set path but is far too heavy to push — route around it, or use it as cover from a guard.";
+  else if (e.lethalToSheep && e.lethalToHero)
+    desc = "A wolf. It runs a fixed patrol and kills BOTH the hero and any sheep it touches. Keep the flock well clear of its lane.";
+  else if (e.lethalToHero)
+    desc = "A guard. It paces a fixed route and kills the hero on contact, but ignores sheep. Time your moves to slip past it.";
+  else
+    desc = "A harmless creature on a fixed path. It can't hurt anyone — the hero can simply shove it out of the way.";
+  return { type, name, desc };
+}
+function inspectInfo(cell) {
+  const r = Number(cell.dataset.worldR ?? cell.dataset.r);
+  const c = Number(cell.dataset.worldC ?? cell.dataset.c);
+  const ent = entityAt(lastSnapshot.gmap, r, c);
+  if (ent) return { ...describeEntityCard(ent), entity: ent, terrainId: null };
+  const tid = Number(cell.dataset.terrain);
+  const t = describeTerrain(tid);
+  return { type: "Terrain", name: t.name, desc: t.desc, entity: null, terrainId: tid };
+}
+
+// Size a demo cell to fill the board stage (5x5 grid + the showcase's 8px padding).
+function showcaseCellSize() {
+  const W = stageEl ? stageEl.clientWidth  : 500;
+  const H = stageEl ? stageEl.clientHeight : 360;
+  const cell = Math.floor((Math.min(W, H) - 16) / 5) - 4;
+  return Math.max(36, Math.min(cell, 92));
+}
+
+// Mirror the demo's 10 actions into the hotbar (read-only while inspecting).
+function renderShowcaseHotbar(tokens) {
+  hotbarEl.classList.add("showcase-hotbar");
+  hotbarEl.innerHTML = "";
+  tokens.forEach((tok, i) => {
+    const tile = document.createElement("div");
+    tile.className = `tile ${tileKind(tok)} solid`;
+    tile.innerHTML = `<span class="tile-tick">${i + 1}</span>`;
+    if (actionStrips && (isMoveToken(tok) || tok === WAIT_TOKEN)) {
+      const strip = isMoveToken(tok) ? actionStrips.arrow : actionStrips.wait;
+      const cv = document.createElement("canvas");
+      cv.className = "tile-anim";
+      cv.width = cv.height = 40;
+      drawStripFrame(cv, strip, strip.topIdx, isMoveToken(tok) ? tokenRotation(tok) : 0);
+      tile.appendChild(cv);
+    } else {
+      tile.insertAdjacentText("beforeend", SYMBOL[tok] || tok);
+    }
+    hotbarEl.appendChild(tile);
+  });
+}
+
+function enterInspect(cell) {
+  if (!cell || inspecting || playing || playingThrough) return;
+  const key = demoKeyFor(cell);
+  if (!key || !DEMOS[key]) return;
+  const info = inspectInfo(cell);
+  clearTimeout(inspectExitTimer);
+  inspecting = true;
   tooltip.hidden = true;
-  showCellPopup(html, demoKeyFor(cell));
-});
 
-// --- mobile board: tap a tile/enemy for an info popup; pinch/drag to zoom & pan
-// (touch only — desktop keeps the hover tooltip above untouched).
+  inspectTypeEl.textContent = info.type;
+  inspectNameEl.textContent = info.name;
+  inspectDescEl.textContent = info.desc;
+  mountIcon(inspectIconEl, { key, terrainId: info.terrainId, entity: info.entity });
 
-const cellPopupOverlay = document.getElementById("cell-popup-overlay");
-const cellPopupBody    = document.getElementById("cell-popup-body");
-const cellPopupClose   = document.getElementById("cell-popup-close");
+  showcaseStage.hidden = false;
+  inspectPanel.hidden = false;
+  inspectBoard = mountBoard(showcaseStage, key, {
+    cellSize: showcaseCellSize(),
+    onStep: i => {
+      const tiles = hotbarEl.children;
+      for (let k = 0; k < tiles.length; k++) tiles[k].classList.toggle("playing", k === i);
+    },
+  });
+  renderShowcaseHotbar(inspectBoard.tokens);
 
-let cellPopupOpenedAt = 0;
-let showcaseHandle = null;
-function showCellPopup(html, key) {
-  if (showcaseHandle) { showcaseHandle.stop(); showcaseHandle = null; }
-  const hasDemo = key && DEMOS[key];
-  cellPopupBody.innerHTML =
-    (hasDemo ? `<div class="showcase-mount" id="cell-card-anim"></div>` : "") + html;
-  cellPopupOverlay.hidden = false;
-  cellPopupOpenedAt = performance.now();
-  const mount = document.getElementById("cell-card-anim");
-  if (mount && hasDemo) showcaseHandle = mountShowcase(mount, key);
+  void document.body.offsetWidth; // reflow so the unhidden panel/stage animate in
+  document.body.classList.add("inspecting");
 }
-function hideCellPopup() {
-  cellPopupOverlay.hidden = true;
-  if (showcaseHandle) { showcaseHandle.stop(); showcaseHandle = null; }
+
+function exitInspect() {
+  if (!inspecting) return;
+  inspecting = false;
+  document.body.classList.remove("inspecting");
+  if (inspectBoard) { inspectBoard.stop(); inspectBoard = null; }
+  hotbarEl.classList.remove("showcase-hotbar");
+  renderHotbar();
+  inspectExitTimer = setTimeout(() => {
+    showcaseStage.hidden = true;
+    showcaseStage.innerHTML = "";
+    inspectPanel.hidden = true;
+  }, 320);
 }
-cellPopupClose.addEventListener("click", hideCellPopup);
-cellPopupOverlay.addEventListener("click", e => {
-  // The same touch that opens the popup can leave behind a synthetic mouse
-  // "click" that lands on the now-visible overlay — ignore it for a beat so
-  // the popup we just opened doesn't immediately close itself.
-  if (performance.now() - cellPopupOpenedAt < 350) return;
-  if (e.target === cellPopupOverlay) hideCellPopup();
-});
+
+inspectBack.addEventListener("click", exitInspect);
+window.addEventListener("keydown", e => {
+  if (e.key === "Escape" && inspecting) { e.preventDefault(); exitInspect(); }
+}, true);
 
 const CAM_MIN_SCALE = 0.35; // allow zooming out to see more of a big map's window
 const CAM_MAX_SCALE = 4;
@@ -1543,7 +1719,6 @@ boardEl.addEventListener("pointerdown", e => {
     panOrigin = board ? { ...board.cam } : null;
   } else if (touchPoints.size === 2 && board) {
     touchGestureMoved = true; // multi-touch is never a tap
-    hideCellPopup();
     const pts = [...touchPoints.values()];
     pinchStartDist  = distance(pts);
     pinchStartMid   = midpoint(pts);
@@ -1585,8 +1760,7 @@ function touchEnd(e) {
   if (touchPoints.size === 0) {
     if (!touchGestureMoved && tapStart) {
       const cell = document.elementFromPoint(tapStart.x, tapStart.y)?.closest(".cell");
-      const html = cell && cellInfoHTML(cell);
-      if (html) showCellPopup(html, demoKeyFor(cell));
+      if (cell && demoKeyFor(cell)) enterInspect(cell);
     }
     tapStart = null; panOrigin = null; pinchStartDist = null; pinchStartMid = null;
   } else if (touchPoints.size === 1 && board) {
@@ -2091,7 +2265,10 @@ window.addEventListener("keydown", e => { if (e.key === "Escape" && !swapOverlay
   try {
     riveModule = await initRiv();
     filmstrips  = await buildFilmstrips();
+    actionStrips = await buildActionStrips();
     initShowcase(filmstrips);
+    initActionButtons();
+    renderHotbar(); // re-render now that action rivs are available
   } catch (err) {
     console.error("Rive init failed — serve over http (not file://):", err);
   }

@@ -9,9 +9,20 @@ export const TERRAIN_RIV = {
   2: 'Trees.riv',
   3: 'Lava.riv',
   4: 'Ice.riv',
-  5: 'Mud.riv',
+  5: 'mud.riv',          // skip — new mud animation
   6: 'Portal.riv',
   8: 'Water.riv',
+  16: 'conveyor belt.riv', // conveyor up
+  17: 'conveyor belt.riv', // conveyor right (the belt's base orientation)
+  18: 'conveyor belt.riv', // conveyor down
+  19: 'conveyor belt.riv', // conveyor left
+  24: 'Pressure Plate.riv', // pressure plate
+};
+
+// UI action animations (move arrows + wait), pre-rendered like the terrain.
+export const ACTION_RIV = {
+  arrow: 'Direction Arrow.riv', // base orientation points UP
+  wait:  'Nothing Action.riv',
 };
 
 // CSS fallback colours for terrain IDs without a .riv file
@@ -93,16 +104,37 @@ async function loadStrip(rivName) {
     if (cov[i] >= 0.95 * maxCov) { topIdx = i; break; }
   }
   topIdx = Math.max(1, Math.min(topIdx, FRAMES - 1));
-  return { frames, topIdx };
+
+  // The "fully-drawn" band: the first frame that's already near-full coverage.
+  // The live board loops within [loIdx, topIdx] so it never shows the sparse
+  // draw-in frames (which made grow-in terrain look washed out). For an ambient
+  // riv (steady coverage) this is the whole range → it loops fully; for a pure
+  // grow-in it collapses near topIdx → it just holds, lush.
+  let loIdx = topIdx;
+  for (let i = 0; i <= topIdx; i++) {
+    if (cov[i] >= 0.85 * maxCov) { loIdx = i; break; }
+  }
+  return { frames, topIdx, loIdx, durSec };
 }
 
-// Pre-render all terrain .riv files. Returns Map<terrainId, {frames, topIdx}>.
+// Pre-render all terrain .riv files. Returns Map<terrainId, {frames, topIdx, durSec}>.
+// Each filename is loaded once and shared across the ids that use it (conveyors).
 export async function buildFilmstrips() {
   const strips = new Map();
+  const byName = new Map();
   for (const [id, name] of Object.entries(TERRAIN_RIV)) {
-    strips.set(Number(id), await loadStrip(name));
+    if (!byName.has(name)) byName.set(name, await loadStrip(name));
+    strips.set(Number(id), byName.get(name));
   }
   return strips;
+}
+
+// Pre-render the UI action animations. Returns { arrow, wait } filmstrips.
+export async function buildActionStrips() {
+  return {
+    arrow: await loadStrip(ACTION_RIV.arrow),
+    wait:  await loadStrip(ACTION_RIV.wait),
+  };
 }
 
 // Play You_Lose!.riv full-screen on an overlay canvas for durationMs, then freeze.

@@ -49,6 +49,8 @@
       <div class="board-rotator">
         <div id="board" class="board"></div>
       </div>
+      <!-- Inspect showcase: a looping 5x5 demo that slides in over the map -->
+      <div id="showcase-stage" class="showcase-stage" hidden></div>
     </div>
     <!-- Board nav (only shown when the map is bigger than the view) -->
     <div class="board-nav" id="board-nav" hidden>
@@ -68,6 +70,10 @@
   <section class="hotbar-panel">
     <div id="hotbar" class="hotbar" aria-label="move hotbar"></div>
   </section>
+
+  <!-- Action zone: the play controls, with the inspect panel stacked on top
+       (they cross-fade — controls drop away, panel rises, in the same space). -->
+  <div class="action-zone">
 
   <!-- Controls: Move pad | Play / Clear | Ability stack -->
   <section class="controls">
@@ -116,16 +122,25 @@
 
   </section>
 
+  <!-- Inspect panel: slides up into the controls' space when a tile/entity is
+       tapped. Shows the thing's type, a clickable animated icon, and a clear
+       description while the 5x5 demo plays up in the map area. -->
+  <section class="inspect-panel" id="inspect-panel" hidden>
+    <button class="inspect-back" id="inspect-back" title="Back to the game">← Back</button>
+    <div class="inspect-card">
+      <div class="inspect-icon" id="inspect-icon" title="Tap to replay"></div>
+      <div class="inspect-text">
+        <span class="inspect-type" id="inspect-type"></span>
+        <h3 class="inspect-name" id="inspect-name"></h3>
+        <p class="inspect-desc" id="inspect-desc"></p>
+      </div>
+    </div>
+  </section>
+
+  </div><!-- /.action-zone -->
+
   <!-- Floating tooltip (desktop hover) -->
   <div id="tooltip" class="tooltip" hidden></div>
-
-  <!-- Tap-to-inspect popup (mobile): tile / entity info -->
-  <div id="cell-popup-overlay" class="cell-popup-overlay" hidden>
-    <div class="cell-popup">
-      <button class="cell-popup-close" id="cell-popup-close" aria-label="close">×</button>
-      <div id="cell-popup-body"></div>
-    </div>
-  </div>
 
   <!-- Ability cache swap popup -->
   <div id="ability-swap-overlay" class="swap-overlay" hidden>

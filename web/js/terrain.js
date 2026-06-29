@@ -84,26 +84,26 @@ export function crackUses(id) { return isCrack(id) ? id - 90 : 0; }
 
 // Human-facing descriptions for tooltips, keyed by effect.
 export const EFFECT_INFO = {
-  [NONE]:        { name: "Grass",     desc: "Plain walkable ground. No effect." },
-  [WALL]:        { name: "Wall",      desc: "Impassable. Entities cannot enter." },
-  [DIE]:         { name: "Lava",      desc: "Any entity that ends a step here dies." },
-  [SLIP]:        { name: "Slip",      desc: "Forces one more step in the same direction (can chain into lava!)." },
-  [SKIP]:        { name: "Skip",      desc: "The entity's next action is consumed as a wait." },
-  [TELEPORT]:    { name: "Portal",    desc: "Teleports to the lowest-index other portal." },
-  [DUPLICATE]:   { name: "Duplicate", desc: "Creates a copy of the entity on an adjacent free tile." },
-  [PUSH]:        { name: "Push",      desc: "Pushes the entity back one tile (opposite of its move)." },
-  [REPEAT_MOVE]: { name: "Repeat",    desc: "The entity repeats its last move on the next tick." },
-  [GLIDE]:       { name: "Glide",     desc: "Slides all the way in the direction you entered, until blocked by a wall or entity." },
-  [WARD]:        { name: "Ward",      desc: "Grants a damage shield for this tick." },
-  [WARP]:        { name: "Warp",      desc: "Teleports to a random free tile, anywhere on the map." },
-  [MIRROR]:      { name: "Mirror",    desc: "Swaps places with the nearest other entity." },
-  [SPIKE]:       { name: "Spike Trap", desc: "Toggles on and off. Anything standing on it while it's active dies — cross it on the off-beat." },
-  [CONVEYOR]:    { name: "Conveyor",  desc: "Carries anything on it one tile per tick in its arrow's direction." },
-  [CRACK]:       { name: "Cracking",  desc: "Collapses to void after being walked over a set number of times." },
-  [PLATE]:       { name: "Plate",     desc: "A pressure plate. While something stands on it, every gate is held open." },
-  [GATE]:        { name: "Gate",      desc: "A wall that opens only while a pressure plate is pressed." },
-  [ONEWAY]:      { name: "One-way",   desc: "Can only be entered from one direction." },
-  [GRANT]:       { name: "Ability Cache", desc: "Holds abilities. End your turn here, then tap the Interact button to choose what to take or swap." },
+  [NONE]:        { name: "Grass",     desc: "Ordinary open ground. Anyone can walk across it freely — it has no effect." },
+  [WALL]:        { name: "Wall",      desc: "A solid block. Nothing can step onto it, so it stops movement and shapes the paths through a level." },
+  [DIE]:         { name: "Lava",      desc: "Deadly. Any entity that ends a step on lava dies instantly. Herd enemies and sheep into it — but never end your own move here." },
+  [SLIP]:        { name: "Slip",      desc: "Slick ice. Stepping on causes one extra forced step in the same direction. That slide can carry you off an edge or into lava, so look before you skate." },
+  [SKIP]:        { name: "Skip",      desc: "Sticky ground. The moment you land here your NEXT action is eaten as a wait — you lose a tick before you can move again." },
+  [TELEPORT]:    { name: "Portal",    desc: "Step on to be sent instantly to the matching portal elsewhere on the map. Pairs of portals link travel across the board." },
+  [DUPLICATE]:   { name: "Duplicate", desc: "Lands a copy of the entity on a free neighbouring tile — handy for splitting a hero into a swarm, or accidentally cloning an enemy." },
+  [PUSH]:        { name: "Push",      desc: "A spring. Whoever steps on is immediately shoved back one tile, the opposite way to the move that brought them in." },
+  [REPEAT_MOVE]: { name: "Repeat",    desc: "An echo tile. After you step on, your last move automatically replays on the next tick — you travel two tiles for one action." },
+  [GLIDE]:       { name: "Glide",     desc: "Frictionless lane. Enter and you keep sliding in that direction until a wall or another entity finally stops you." },
+  [WARD]:        { name: "Ward",      desc: "A blessing tile. While you stand on it you carry a shield, surviving a hit or hazard for that tick." },
+  [WARP]:        { name: "Warp",      desc: "Chaotic teleporter. Step on to be flung to a completely random free tile anywhere on the map — destination unknown." },
+  [MIRROR]:      { name: "Mirror",    desc: "Step on to instantly swap places with the nearest other entity — pull a far-off sheep to you, or trade spots with a threat." },
+  [SPIKE]:       { name: "Spike Trap", desc: "Blinks on and off every tick. Anything caught on it while the spikes are UP dies; while they're down it's safe. Cross on the off-beat." },
+  [CONVEYOR]:    { name: "Conveyor",  desc: "A moving belt. Anything standing on it is carried one tile per tick in the arrow's direction, whether it wants to move or not." },
+  [CRACK]:       { name: "Cracking Floor", desc: "Fragile ground. It survives a set number of crossings, then collapses into deadly void — the next entity to step there falls through." },
+  [PLATE]:       { name: "Pressure Plate", desc: "A switch held down by weight. While any entity stands on a plate, every gate on the map stays open. Step off and the gates slam shut." },
+  [GATE]:        { name: "Gate",      desc: "A barrier that's solid by default. It only opens — and becomes walkable — while a pressure plate somewhere is being pressed." },
+  [ONEWAY]:      { name: "One-way",   desc: "A turnstile. It can only be entered from the direction its arrow points; try to step in from any other side and you're blocked." },
+  [GRANT]:       { name: "Ability Cache", desc: "A stash of abilities. End a turn standing here, then tap the 🤝 Interact button to pick up or swap which abilities your hero carries." },
 };
 
 export function effectOf(terrainId, registry = DEFAULT_REGISTRY) {
@@ -120,6 +120,6 @@ export function isPassable(terrainId, registry = DEFAULT_REGISTRY) {
 }
 
 export function describeTerrain(terrainId) {
-  if (terrainId === 0) return { name: "Void", desc: "Empty space — step here and fall to your death." };
+  if (terrainId === 0) return { name: "Void", desc: "The empty gap beyond the level. Anything that steps into the void falls and dies — push hazards toward it, and mind the edges." };
   return EFFECT_INFO[effectOf(terrainId)] || EFFECT_INFO[NONE];
 }

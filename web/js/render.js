@@ -180,8 +180,11 @@ export function updateBoard(board, gmap, dying = []) {
     if (existing) {
       existing.target = 1;
     } else {
-      const dur = 0.8 + Math.random() * 0.4; // random 0.8–1.2 s
-      animCells.set(key, { progress: 0, target: 1, speed: 1 / dur });
+      const dur = 0.8 + Math.random() * 0.4; // random 0.8–1.2 s fade-in reveal
+      // `phase` is a random starting point in the tile's looping animation, so
+      // tiles of the same terrain don't all play in lock-step — the board feels
+      // alive instead of pulsing in unison.
+      animCells.set(key, { progress: 0, target: 1, speed: 1 / dur, phase: Math.random() });
     }
   }
   for (const [key, anim] of animCells) {
@@ -357,14 +360,32 @@ export function startRafLoop(board) {
       const terrainId = gmap.terrain[wr][wc];
       const { ctx, canvas } = cells[si][sj];
       const p = anim.progress;
-      // Fade in fast, hold opaque, fade out fast
+      // `progress` is only the fog-reveal fade now; the animation itself loops
+      // continuously via `phase` so the board keeps moving.
       const alpha = Math.min(1, p * 2);
 
       if (filmstrips && filmstrips.has(terrainId)) {
         const strip = filmstrips.get(terrainId);
-        const frameIdx = Math.round(p * strip.topIdx);
+        // Advance the loop at the riv's OWN duration — a long Pressure-Plate
+        // cycle plays slower than a quick Grass one. Loop only within the
+        // fully-drawn band [loIdx, topIdx] so terrain never looks washed out.
+        const cycle = strip.durSec || 1;
+        anim.phase = ((anim.phase ?? 0) + dt / cycle) % 1;
+        const lo = strip.loIdx ?? strip.topIdx;
+        const span = strip.topIdx - lo + 1;
+        const frameIdx = lo + Math.min(span - 1, Math.floor(anim.phase * span));
+        const img = strip.frames[frameIdx];
         ctx.globalAlpha = alpha;
-        ctx.drawImage(strip.frames[frameIdx], 0, 0, canvas.width, canvas.height);
+        const dir = terrain.conveyorDir(terrainId); // belt base points right → rotate per arrow
+        if (dir) {
+          ctx.save();
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.rotate(Math.atan2(dir[0], dir[1]));
+          ctx.drawImage(img, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height);
+          ctx.restore();
+        } else {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }
         ctx.globalAlpha = 1;
       } else if (terrainId !== 0 && TERRAIN_FALLBACK[terrainId]) {
         ctx.globalAlpha = alpha;
