@@ -4,9 +4,14 @@ import * as terrain from "./terrain.js";
 import { ROUND_LENGTH } from "./tokens.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
 import { loopSummary } from "./game.js";
-import { TERRAIN_FALLBACK } from "./riv.js";
+import { TERRAIN_FALLBACK, LOOP_TERRAIN } from "./riv.js";
 
 const ANIM_SPEED_DEFAULT = 1 / 1.0; // fallback; each cell gets its own random speed
+
+// Render canvases at device-pixel resolution (capped) so tiles stay crisp on
+// hi-DPI screens instead of looking upscaled/pixelated. The riv is vector, but the
+// filmstrip is a bitmap cache, so the backing store must match the real pixels.
+const DPR = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2);
 
 // --- cell sizing --------------------------------------------------------------
 
@@ -75,11 +80,12 @@ export function initBoard(boardEl, mapRows, mapCols, vision) {
       div.style.width  = `${cellSize}px`;
       div.style.height = `${cellSize}px`;
 
-      // Canvas for Rive tile animation
+      // Canvas for Rive tile animation — backing store at device resolution,
+      // CSS-sized to the cell (.tile-canvas { width/height: 100% }).
       const canvas = document.createElement('canvas');
       canvas.className = 'tile-canvas';
-      canvas.width  = cellSize;
-      canvas.height = cellSize;
+      canvas.width  = Math.round(cellSize * DPR);
+      canvas.height = Math.round(cellSize * DPR);
       div.appendChild(canvas);
 
       // Entity glyph layer
@@ -335,6 +341,11 @@ export function startRafLoop(board) {
 
     if (!gmap) { requestAnimationFrame(frame); return; }
 
+    // Gates open while ANY alive entity stands on a pressure plate (matches the
+    // engine's _gatesOpen). Drives the gate riv: locked when shut, grass when open.
+    const gateOpen = gmap.entities.some(
+      e => e.alive && terrain.effectOf(gmap.terrain[e.row]?.[e.col]) === terrain.PLATE);
+
     // Advance progress and draw each animated world tile
     for (const [key, anim] of animCells) {
       // Advance toward target at this cell's own random speed
@@ -364,16 +375,36 @@ export function startRafLoop(board) {
       // continuously via `phase` so the board keeps moving.
       const alpha = Math.min(1, p * 2);
 
-      if (filmstrips && filmstrips.has(terrainId)) {
+      const isGate = terrain.effectOf(terrainId) === terrain.GATE;
+
+      if (isGate && filmstrips && filmstrips.has(terrainId)) {
+        // The gate doesn't loop — it animates to its locked end when shut and
+        // back to its open (grass) start when a plate is pressed.
         const strip = filmstrips.get(terrainId);
-        // Advance the loop at the riv's OWN duration — a long Pressure-Plate
-        // cycle plays slower than a quick Grass one. Loop only within the
-        // fully-drawn band [loIdx, topIdx] so terrain never looks washed out.
-        const cycle = strip.durSec || 1;
-        anim.phase = ((anim.phase ?? 0) + dt / cycle) % 1;
-        const lo = strip.loIdx ?? strip.topIdx;
-        const span = strip.topIdx - lo + 1;
-        const frameIdx = lo + Math.min(span - 1, Math.floor(anim.phase * span));
+        const tgt = gateOpen ? 0 : 1;          // 0 = open (grass), 1 = locked (end)
+        if (anim.gate == null) anim.gate = tgt; // start settled in the current state
+        const gs = dt / 0.45;                   // ~0.45 s to open/close
+        if (anim.gate < tgt) anim.gate = Math.min(tgt, anim.gate + gs);
+        else if (anim.gate > tgt) anim.gate = Math.max(tgt, anim.gate - gs);
+        // Interpolate between the open (grass) frame and the locked end frame.
+        const openF = strip.openIdx ?? 0;
+        const frameIdx = Math.round(openF + anim.gate * (strip.topIdx - openF));
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(strip.frames[frameIdx], 0, 0, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
+      } else if (filmstrips && filmstrips.has(terrainId)) {
+        const strip = filmstrips.get(terrainId);
+        // Tiles are STATIONARY (hold the grown frame) unless opted into constant
+        // animation via LOOP_TERRAIN. Looping tiles cycle within their fully-drawn
+        // band [loIdx, topIdx], at the riv's own duration.
+        let frameIdx = strip.topIdx;
+        if (LOOP_TERRAIN.has(terrainId)) {
+          const cycle = strip.durSec || 1;
+          anim.phase = ((anim.phase ?? 0) + dt / cycle) % 1;
+          const lo = strip.loIdx ?? strip.topIdx;
+          const span = strip.topIdx - lo + 1;
+          frameIdx = lo + Math.min(span - 1, Math.floor(anim.phase * span));
+        }
         const img = strip.frames[frameIdx];
         ctx.globalAlpha = alpha;
         const dir = terrain.conveyorDir(terrainId); // belt base points right → rotate per arrow

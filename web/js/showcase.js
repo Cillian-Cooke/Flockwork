@@ -24,6 +24,9 @@ const ACTIONS = 10;   // every demo is exactly 10 actions (fills the hotbar)
 const STEP_MS = 620;  // time spent on each action
 const HOLD_MS = 900;  // pause on the final action before looping
 
+// Render canvases at device-pixel resolution (capped) so demo tiles stay crisp.
+const DPR = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2);
+
 // Colours for terrain the board normally draws with a .riv filmstrip, so the
 // showcase still reads if filmstrips are missing (e.g. file://).
 const RIV_FALLBACK = {
@@ -260,11 +263,16 @@ function runDemo(spec) {
 
 // Draw terrain id into ctx at S×S. Held static (grown filmstrip frame) — no idle
 // looping. Adds direction arrows / gate bars where the meaning is directional.
-function drawTerrainTile(ctx, id, S) {
+function drawTerrainTile(ctx, id, S, gateOpen = false) {
   ctx.clearRect(0, 0, S, S);
   const strip = _filmstrips && _filmstrips.get(id);
   const conv = terrain.conveyorDir(id); // belt base points right → rotate per arrow
   if (strip) {
+    if (terrain.effectOf(id) === terrain.GATE) {
+      // Gate: locked (end frame) when shut, open/grass frame when a plate is held.
+      ctx.drawImage(strip.frames[gateOpen ? (strip.openIdx ?? 0) : strip.topIdx], 0, 0, S, S);
+      return;
+    }
     if (conv) {
       ctx.save();
       ctx.translate(S / 2, S / 2);
@@ -338,7 +346,8 @@ export function mountBoard(container, key, opts = {}) {
     for (let c = 0; c < SIZE; c++) {
       const cv = document.createElement("canvas");
       cv.className = "showcase-tile";
-      cv.width = cv.height = CELL;
+      cv.width = cv.height = Math.round(CELL * DPR);
+      cv.style.width = cv.style.height = CELL + "px";
       grid.appendChild(cv);
       trow.push(cv.getContext("2d"));
     }
@@ -369,15 +378,19 @@ export function mountBoard(container, key, opts = {}) {
     return a;
   }
 
-  function drawTerrain(grid2d) {
+  const CELLB = Math.round(CELL * DPR); // canvas backing size
+  function drawTerrain(grid2d, gateOpen) {
     for (let r = 0; r < SIZE; r++)
-      for (let c = 0; c < SIZE; c++) drawTerrainTile(tiles[r][c], grid2d[r][c], CELL);
+      for (let c = 0; c < SIZE; c++) drawTerrainTile(tiles[r][c], grid2d[r][c], CELLB, gateOpen);
   }
 
   let prevAlive = new Map();
   function applyFrame(f, animate) {
     const frame = frames[f];
-    drawTerrain(frame.terrain);
+    // Gate state for this captured tick: open while an entity holds a plate.
+    const gateOpen = frame.ents.some(
+      e => e.alive && terrain.effectOf(frame.terrain[e.row][e.col]) === terrain.PLATE);
+    drawTerrain(frame.terrain, gateOpen);
     const present = new Set();
     for (const snap of frame.ents) {
       present.add(snap.id);
@@ -447,15 +460,16 @@ export function mountIcon(container, { key, terrainId, entity }) {
     return { play };
   }
 
+  const SB = Math.round(S * DPR); // backing store (CSS sizes the canvas to S)
   const cv = document.createElement("canvas");
-  cv.width = cv.height = S;
+  cv.width = cv.height = SB;
   cv.className = "inspect-icon-canvas";
   container.appendChild(cv);
   const ctx = cv.getContext("2d");
   const strip = _filmstrips && _filmstrips.get(terrainId);
 
   if (!strip) {
-    drawTerrainTile(ctx, terrainId, S);
+    drawTerrainTile(ctx, terrainId, SB);
     const play = () => { cv.classList.remove("pop"); void cv.offsetWidth; cv.classList.add("pop"); };
     cv.addEventListener("click", play);
     return { play };
@@ -463,7 +477,7 @@ export function mountIcon(container, { key, terrainId, entity }) {
 
   // Riv terrain: play frames 0..last (grow in, then blank out), settle on grown.
   let raf = 0;
-  function settle() { ctx.clearRect(0, 0, S, S); ctx.drawImage(strip.frames[strip.topIdx], 0, 0, S, S); }
+  function settle() { ctx.clearRect(0, 0, SB, SB); ctx.drawImage(strip.frames[strip.topIdx], 0, 0, SB, SB); }
   function play() {
     cancelAnimationFrame(raf);
     const start = performance.now();
@@ -471,8 +485,8 @@ export function mountIcon(container, { key, terrainId, entity }) {
     function step(now) {
       const t = Math.min(1, (now - start) / dur);
       const fi = Math.min(strip.frames.length - 1, Math.round(t * (strip.frames.length - 1)));
-      ctx.clearRect(0, 0, S, S);
-      ctx.drawImage(strip.frames[fi], 0, 0, S, S);
+      ctx.clearRect(0, 0, SB, SB);
+      ctx.drawImage(strip.frames[fi], 0, 0, SB, SB);
       if (t < 1) raf = requestAnimationFrame(step); else settle();
     }
     raf = requestAnimationFrame(step);

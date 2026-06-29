@@ -7,7 +7,7 @@ import { classify, tokenLabel, ROUND_LENGTH, abilitySlotOf, isMoveToken, AIM_TOK
 import { describeTerrain, effectOf, DIE } from "./terrain.js";
 import { HERO, ENEMY, SHEEP } from "./entity.js";
 import { ABILITIES, lockAfter, normalizeLoadout, SLOTS } from "./abilities.js";
-import { initRiv, buildFilmstrips, buildActionStrips, playYouLose } from "./riv.js";
+import { initRiv, loadFilmstrips, buildActionStrips, playYouLose } from "./riv.js";
 import { initShowcase, mountBoard, mountIcon, DEMOS } from "./showcase.js";
 import { buildShareText, computeScore } from "./share.js";
 
@@ -42,6 +42,9 @@ let endShown      = false;
 
 const KEYMAP = { w:"w",a:"a",s:"s",d:"d","1":"1","2":"2","3":"3",".":"." };
 const SYMBOL  = { w:"↑",s:"↓",a:"←",d:"→",".":"·" };
+
+// Device-pixel resolution (capped) for crisp action-riv canvases on hi-DPI screens.
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
 
 // --- mobile lockdown: no pinch-zoom / double-tap-zoom, page stays fixed ----
 
@@ -365,7 +368,7 @@ function initActionButtons() {
     const rot = isWait ? 0 : tokenRotation(token);
     const cv = document.createElement("canvas");
     cv.className = "btn-anim";
-    cv.width = cv.height = 48;
+    cv.width = cv.height = Math.round(48 * DPR);
     drawStripFrame(cv, strip, strip.topIdx, rot);
     btn.classList.add("has-riv");
     btn.insertBefore(cv, btn.firstChild);
@@ -477,7 +480,7 @@ function makeTile(token, tickNo, solid, index, info) {
     const rot = isMoveToken(token) ? tokenRotation(token) : 0;
     const cv = document.createElement("canvas");
     cv.className = "tile-anim";
-    cv.width = cv.height = 40;
+    cv.width = cv.height = Math.round(48 * DPR);
     if (solid && index === _animateIndex) animateStripOnce(cv, strip, rot);
     else drawStripFrame(cv, strip, strip.topIdx, rot);
     tile.appendChild(cv);
@@ -1580,7 +1583,7 @@ function renderShowcaseHotbar(tokens) {
       const strip = isMoveToken(tok) ? actionStrips.arrow : actionStrips.wait;
       const cv = document.createElement("canvas");
       cv.className = "tile-anim";
-      cv.width = cv.height = 40;
+      cv.width = cv.height = Math.round(48 * DPR);
       drawStripFrame(cv, strip, strip.topIdx, isMoveToken(tok) ? tokenRotation(tok) : 0);
       tile.appendChild(cv);
     } else {
@@ -2264,11 +2267,17 @@ window.addEventListener("keydown", e => { if (e.key === "Escape" && !swapOverlay
   // Initialise Rive runtime and pre-render all terrain filmstrips
   try {
     riveModule = await initRiv();
-    filmstrips  = await buildFilmstrips();
-    actionStrips = await buildActionStrips();
+    // The board reads this map every frame and falls back to flat colours for any
+    // id not loaded yet — so start it empty and STREAM the tiles in (yielding
+    // between each) instead of pre-rendering the whole map in one blocking burst.
+    filmstrips = new Map();
     initShowcase(filmstrips);
+    // Action rivs are tiny — load them first so the buttons/hotbar are animated.
+    actionStrips = await buildActionStrips();
     initActionButtons();
-    renderHotbar(); // re-render now that action rivs are available
+    renderHotbar();
+    // Terrain tiles stream in the background; not awaited.
+    loadFilmstrips(filmstrips);
   } catch (err) {
     console.error("Rive init failed — serve over http (not file://):", err);
   }

@@ -1,7 +1,11 @@
 // Rive runtime loader, filmstrip pre-renderer, and You Lose overlay player.
 
-const TILE  = 96;   // pre-render resolution per frame (independent of cell size)
-const FRAMES = 48;  // frames to sample per animation
+// Pre-render resolution per frame. High enough that tiles stay crisp when scaled
+// up to a cell on a hi-DPI screen (the riv is vector, but a filmstrip is a bitmap
+// cache — so we cache it large). FRAMES is the sampling rate for the animation;
+// most tiles are static (one frame shown), so 24 keeps memory reasonable.
+const TILE  = 192;
+const FRAMES = 24;
 
 // terrain ID → .riv filename
 export const TERRAIN_RIV = {
@@ -17,7 +21,14 @@ export const TERRAIN_RIV = {
   18: 'conveyor belt.riv', // conveyor down
   19: 'conveyor belt.riv', // conveyor left
   24: 'Pressure Plate.riv', // pressure plate
+  25: 'Locked tile.riv',    // gate — frame 0 = open (grass), end = locked
 };
+
+// Terrain IDs that are ALLOWED to loop their animation continuously on the board.
+// Everything else holds a single grown frame (stationary) — add an id here to opt
+// a tile into constant animation. (Gates are state-driven and animate regardless.)
+//   e.g. new Set([1, 8, 16, 17, 18, 19]) -> grass, water, conveyors loop
+export const LOOP_TERRAIN = new Set([]);
 
 // UI action animations (move arrows + wait), pre-rendered like the terrain.
 export const ACTION_RIV = {
@@ -55,12 +66,16 @@ export async function initRiv() {
   return _rive;
 }
 
-// Count non-transparent pixels to find the last fully-drawn frame.
-function coverage(canvas) {
+// Per-frame coverage (count of opaque pixels) and mean luma over those pixels.
+// Coverage finds the fully-drawn band; luma finds the brightest frame — used as
+// the gate's "open" (clean grass) frame, before the darker locked bars appear.
+function measure(canvas) {
   const d = canvas.getContext('2d').getImageData(0, 0, TILE, TILE).data;
-  let n = 0;
-  for (let i = 3; i < d.length; i += 4) if (d[i] > 12) n++;
-  return n;
+  let n = 0, lum = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] > 12) { n++; lum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; }
+  }
+  return { cov: n, luma: n ? lum / n : 0 };
 }
 
 async function loadStrip(rivName) {
@@ -96,9 +111,11 @@ async function loadStrip(rivName) {
     frames.push(c);
   }
 
-  // Find the last frame before the animation blanks out at the very end
-  const cov = frames.map(coverage);
+  const m = frames.map(measure);
+  const cov = m.map(x => x.cov);
   const maxCov = Math.max(...cov, 1);
+
+  // Find the last frame before the animation blanks out at the very end
   let topIdx = FRAMES - 1;
   for (let i = FRAMES - 1; i >= 1; i--) {
     if (cov[i] >= 0.95 * maxCov) { topIdx = i; break; }
@@ -114,17 +131,43 @@ async function loadStrip(rivName) {
   for (let i = 0; i <= topIdx; i++) {
     if (cov[i] >= 0.85 * maxCov) { loIdx = i; break; }
   }
-  return { frames, topIdx, loIdx, durSec };
+
+  // openIdx: the brightest fully-drawn frame — for the gate this is the clean
+  // grass/open state, before the darker locked bars cross in.
+  let openIdx = loIdx, bestLuma = -1;
+  for (let i = loIdx; i <= topIdx; i++) {
+    if (cov[i] >= 0.85 * maxCov && m[i].luma > bestLuma) { bestLuma = m[i].luma; openIdx = i; }
+  }
+  return { frames, topIdx, loIdx, openIdx, durSec };
 }
 
-// Pre-render all terrain .riv files. Returns Map<terrainId, {frames, topIdx, durSec}>.
+// Pre-render all terrain .riv files. Returns Map<terrainId, {frames, …}>.
 // Each filename is loaded once and shared across the ids that use it (conveyors).
 export async function buildFilmstrips() {
   const strips = new Map();
+  await loadFilmstrips(strips);
+  return strips;
+}
+
+const nextIdle = () => new Promise(res => {
+  // Yield to the browser between strips so we never block the main thread with
+  // the whole map's pre-render at once — tiles stream in as the CPU is free.
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(() => res(), { timeout: 200 });
+  else requestAnimationFrame(() => res());
+});
+
+// Stream the terrain filmstrips into an existing Map, one .riv at a time, yielding
+// between each so the board stays responsive and tiles appear as they finish.
+// `onEach(id, strip)` fires after each id is populated. Returns when all are done.
+export async function loadFilmstrips(strips, onEach) {
   const byName = new Map();
   for (const [id, name] of Object.entries(TERRAIN_RIV)) {
-    if (!byName.has(name)) byName.set(name, await loadStrip(name));
+    if (!byName.has(name)) {
+      await nextIdle();
+      byName.set(name, await loadStrip(name));
+    }
     strips.set(Number(id), byName.get(name));
+    if (onEach) onEach(Number(id), byName.get(name));
   }
   return strips;
 }
