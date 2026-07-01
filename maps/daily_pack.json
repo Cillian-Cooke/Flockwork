@@ -130,6 +130,70 @@
         "a": ["d", "a", "a", "d"]
       },
       "meta": { "P": { "abilities": ["hook", "blink"] } }
+    },
+
+    {
+      "name": "Day 8 — The Sever",
+      "vision": 8,
+      "par": 4,
+      "grid": [
+        ["3",  "1s", "1" ],
+        ["1s", "1P", "1" ],
+        ["1",  "1",  "3" ]
+      ],
+      "scripts": { "s": ["."] },
+      "meta": { "P": { "abilities": ["whistle"] } }
+    },
+
+    {
+      "name": "Day 9 — The Crossing",
+      "vision": 8,
+      "par": 5,
+      "grid": [
+        ["3",  "1s", "1",  "1",  "1P"],
+        ["1",  "1",  "1",  "1s", "3" ]
+      ],
+      "scripts": { "s": ["."] },
+      "meta": { "P": { "abilities": ["whistle"] } }
+    },
+
+    {
+      "name": "Day 10 — The Chute",
+      "vision": 8,
+      "par": 6,
+      "grid": [
+        ["3",  "1s", "1s", "1s"],
+        ["2",  "2",  "2",  "1P"]
+      ],
+      "scripts": { "s": ["."] },
+      "meta": { "P": { "abilities": ["whistle"] } }
+    },
+
+    {
+      "name": "Day 11 — The Coldforge",
+      "vision": 8,
+      "par": 6,
+      "grid": [
+        ["1P", "1",  "1s", "1" ],
+        ["1",  "2",  "4",  "2" ],
+        ["1",  "2",  "3",  "2" ],
+        ["1",  "1",  "1",  "1" ]
+      ],
+      "scripts": { "s": ["."] },
+      "meta": { "P": { "abilities": ["hook", "charge"] } }
+    },
+
+    {
+      "name": "Day 12 — The Reckoning",
+      "vision": 8,
+      "par": 7,
+      "grid": [
+        ["1s", "1",  "1",  "3" ],
+        ["2",  "2",  "1",  "1" ],
+        ["1s", "1",  "1P", "3" ]
+      ],
+      "scripts": { "s": ["."] },
+      "meta": { "P": { "abilities": ["whistle", "charge"] } }
     }
   ]
 }
